@@ -334,6 +334,7 @@ function modeState(): AcpSchema.SessionModeState {
 // Mirrors the real Grok ACP: it advertises versioned model ids, never the CLI's own
 // "grok-build" product name, and it rejects unknown ids in session/set_model.
 const grokAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
+  { modelId: "auto", name: "Auto" },
   {
     modelId: "grok-4.6",
     name: "Grok 4.6",
@@ -349,6 +350,7 @@ const grokAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
     },
   },
   { modelId: "grok-mock-alt", name: "Grok Mock Alt" },
+  { modelId: "kiro-mock-alt", name: "Kiro Mock Alt" },
 ];
 
 function modelState(): AcpSchema.SessionModelState {
