@@ -474,12 +474,21 @@ describe("KiroAdapterV2", () => {
           sessionUpdate: "agent_message_chunk",
           content: { type: "text", text: "ok" },
         }),
+        update({
+          sessionUpdate: "session_info_update",
+          _meta: { kiro: { kind: "context_usage", contextUsage: { usagePercentage: 0.9 } } },
+        }),
         answer("session/prompt", { stopReason: "end_turn" }),
       ],
       drive: ({ events, startTurn }) =>
         Effect.gen(function* () {
           yield* startTurn;
-          assert.equal(terminalStatus(yield* collectTurn(events)), "completed");
+          const result = yield* collectTurn(events);
+          assert.equal(terminalStatus(result), "completed");
+          assert.isTrue(result.some((event) =>
+            event.type === "provider_thread.updated" &&
+            event.providerThread.nativeMetadata?.contextUsagePercentage === 0.9,
+          ));
         }),
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );

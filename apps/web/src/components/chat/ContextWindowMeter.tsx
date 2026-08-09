@@ -50,7 +50,7 @@ export function ContextWindowMeter(props: {
             variant="ghost-muted"
             className="size-7"
             aria-label={
-              usage.maxTokens !== null && usedPercentage
+              usedPercentage !== null
                 ? `Context window ${usedPercentage} used`
                 : `Context window ${formatContextWindowTokens(usage.usedTokens)} tokens used`
             }
@@ -98,14 +98,18 @@ export function ContextWindowMeter(props: {
         <div className="flex flex-col gap-2 p-(--floating-content-inset)">
           <div className="flex items-center justify-between gap-3">
             <div className="font-medium text-muted-foreground text-xs">Context Window</div>
-            {usage.maxTokens !== null && usedPercentage ? (
+            {usedPercentage !== null ? (
               <div className="text-secondary-label text-2xs tabular-nums">
                 <span>{usedPercentage}</span>
-                <span className="mx-1">·</span>
-                <span>
-                  {formatContextWindowTokens(usage.usedTokens)}/
-                  {formatContextWindowTokens(usage.maxTokens ?? null)}
-                </span>
+                {usage.maxTokens !== null && usage.usedTokens !== null ? (
+                  <>
+                    <span className="mx-1">·</span>
+                    <span>
+                      {formatContextWindowTokens(usage.usedTokens)}/
+                      {formatContextWindowTokens(usage.maxTokens ?? null)}
+                    </span>
+                  </>
+                ) : null}
               </div>
             ) : (
               <div className="text-secondary-label text-2xs tabular-nums">
@@ -113,7 +117,7 @@ export function ContextWindowMeter(props: {
               </div>
             )}
           </div>
-          {usage.maxTokens !== null ? (
+          {usedPercentage !== null ? (
             <div
               className="h-1.5 w-full overflow-hidden rounded-full bg-muted/60"
               role="progressbar"

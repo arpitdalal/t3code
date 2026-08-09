@@ -57,6 +57,18 @@ const KIRO_DEFAULT_MODEL = "default";
 const KIRO_COMPACT_METHOD = "_kiro/session/compact";
 const KIRO_STEER_METHOD = "_session/steer";
 const KIRO_FALLBACK_DEFAULT_MODEL = "auto";
+const KiroContextUsage = Schema.Struct({
+  kind: Schema.Literal("context_usage"),
+  contextUsage: Schema.optional(
+    Schema.Struct({
+      usagePercentage: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
+    }),
+  ),
+  usagePercentage: Schema.optional(
+    Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
+  ),
+});
+const decodeKiroContextUsage = Schema.decodeUnknownOption(KiroContextUsage);
 const DEFAULT_KIRO_SETTINGS = Schema.decodeSync(KiroSettings)({});
 
 const KiroProviderCapabilitiesV2 = {
@@ -518,7 +530,7 @@ function extractKiroSubagentUpdate(tool: AcpToolCallState): AcpAdapterV2Subagent
 function kiroPromptFailure(cause: unknown) {
   return makeProviderFailure({
     cause,
-    ...(isAcpRequestError(cause) ? { message: cause.errorMessage, code: String(cause.code) } : {}),
+    ...(isAcpRequestError(cause) ? { message: cause.message, code: String(cause.code) } : {}),
     class: "provider_error",
   });
 }
@@ -545,6 +557,14 @@ function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Fl
     clientCapabilitiesMeta: { kiro: { hooks: { enabled: true, v2: true } } },
     makeRuntime,
     promptFailure: kiroPromptFailure,
+    sessionMetadata: (notification) => {
+      const meta = notification.update._meta;
+      const usage = typeof meta === "object" && meta !== null
+        ? Option.getOrUndefined(decodeKiroContextUsage(meta.kiro))
+        : undefined;
+      const percentage = usage?.contextUsage?.usagePercentage ?? usage?.usagePercentage;
+      return percentage === undefined ? undefined : { contextUsagePercentage: percentage };
+    },
     ignoreSessionUpdate: makeKiroCloudConfigFilter(),
     normalizeSessionUpdate: (notification) =>
       stripSteeringNote(normalizeKiroSessionUpdate(notification)),

@@ -10,3 +10,4 @@ export {
   kiroAgentDescriptor,
   kiroDefaultModelId,
 } from "./server/status.ts";
+export { makeKiroTextGeneration } from "./server/textGeneration.ts";
