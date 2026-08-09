@@ -2,6 +2,7 @@ import {
   AntigravitySettings,
   ClaudeSettings,
   CodexSettings,
+  KiroSettings,
   isProviderDriverKind,
   ProviderDriverKind,
 } from "@t3tools/contracts";
@@ -40,6 +41,21 @@ export const providerClients = makeProviderClientRegistry([
     modelFamilies: ["Gemini "],
     acpRegistryAgentIds: ["antigravity-acp"],
     settingsSchema: AntigravitySettings,
+  },
+  {
+    driverKind: ProviderDriverKind.make("kiro"),
+    label: "Kiro",
+    badgeLabel: "Early Access",
+    settingsSchema: KiroSettings,
+    environmentFields: [
+      {
+        name: "KIRO_API_KEY",
+        label: "Kiro API key",
+        description: "Optional. Signs in without `kiro-cli login` (Kiro Pro and above).",
+        placeholder: "Paste API key",
+        sensitive: true,
+      },
+    ],
   },
   museClient,
   piClient,

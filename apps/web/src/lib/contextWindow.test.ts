@@ -17,6 +17,20 @@ import { deriveLatestContextWindowSnapshot, latestProviderTurnTokenUsage } from 
 const decodeTokenUsage = Schema.decodeSync(OrchestrationV2ProviderTurnTokenUsage);
 
 describe("V2 context window presentation", () => {
+  it("shows a native percentage without inventing token counts", () => {
+    const snapshot = deriveLatestContextWindowSnapshot([], undefined, {
+      contextUsage: null,
+      nativeMetadata: { contextUsagePercentage: 0.9 },
+      updatedAt: DateTime.makeUnsafe("2026-10-15T00:00:00Z"),
+    });
+    expect(snapshot).toMatchObject({
+      usedTokens: null,
+      maxTokens: null,
+      usedPercentage: 0.9,
+      remainingPercentage: 99.1,
+    });
+  });
+
   it("uses retained compaction token data when available", () => {
     const snapshot = deriveLatestContextWindowSnapshot([
       {

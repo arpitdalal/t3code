@@ -17,7 +17,8 @@ type NullableContextWindowUsage = {
     : ThreadTokenUsageSnapshot[Key];
 };
 
-export type ContextWindowSnapshot = NullableContextWindowUsage & {
+export type ContextWindowSnapshot = Omit<NullableContextWindowUsage, "usedTokens"> & {
+  readonly usedTokens: number | null;
   readonly remainingTokens: number | null;
   readonly usedPercentage: number | null;
   readonly remainingPercentage: number | null;
@@ -59,7 +60,10 @@ export function deriveLatestContextWindowSnapshot(
     readonly item: ThreadStructureTurnItem;
   }>,
   liveUsage?: OrchestrationV2ProviderTurnTokenUsage | null,
-  providerThread?: Pick<OrchestrationV2ProviderThread, "contextUsage" | "updatedAt"> | null,
+  providerThread?:
+    | (Pick<OrchestrationV2ProviderThread, "contextUsage" | "updatedAt"> &
+        Partial<Pick<OrchestrationV2ProviderThread, "nativeMetadata">>)
+    | null,
 ): ContextWindowSnapshot | null {
   if (liveUsage != null) {
     const usedTokens = Math.max(0, liveUsage.usedTokens);
@@ -94,37 +98,43 @@ export function deriveLatestContextWindowSnapshot(
     };
   }
   const providerUsage = providerThread?.contextUsage;
+  const nativePercentage = providerThread?.nativeMetadata?.contextUsagePercentage;
   const providerUsageUpdatedAt = providerThread?.updatedAt;
   if (
-    providerUsage !== null &&
-    providerUsage !== undefined &&
+    (providerUsage != null || nativePercentage !== undefined) &&
     providerUsageUpdatedAt !== undefined
   ) {
-    const maxTokens = asFiniteNumber(providerUsage.maxTokens);
-    const usedTokens = providerUsage.usedTokens;
+    const maxTokens = asFiniteNumber(providerUsage?.maxTokens);
+    const usedTokens = providerUsage?.usedTokens ?? null;
     const usedPercentage =
-      maxTokens !== null && maxTokens > 0 ? Math.min(100, (usedTokens / maxTokens) * 100) : null;
+      nativePercentage ??
+      (usedTokens !== null && maxTokens !== null && maxTokens > 0
+        ? Math.min(100, (usedTokens / maxTokens) * 100)
+        : null);
     return {
       usedTokens,
-      totalProcessedTokens: asFiniteNumber(providerUsage.totalProcessedTokens),
+      totalProcessedTokens: asFiniteNumber(providerUsage?.totalProcessedTokens),
       maxTokens,
-      remainingTokens: maxTokens === null ? null : Math.max(0, Math.round(maxTokens - usedTokens)),
+      remainingTokens:
+        maxTokens === null || usedTokens === null
+          ? null
+          : Math.max(0, Math.round(maxTokens - usedTokens)),
       usedPercentage,
       remainingPercentage: usedPercentage === null ? null : Math.max(0, 100 - usedPercentage),
-      inputTokens: asFiniteNumber(providerUsage.inputTokens),
-      cachedInputTokens: asFiniteNumber(providerUsage.cachedInputTokens),
-      outputTokens: asFiniteNumber(providerUsage.outputTokens),
-      reasoningOutputTokens: asFiniteNumber(providerUsage.reasoningOutputTokens),
-      lastUsedTokens: asFiniteNumber(providerUsage.lastUsedTokens),
-      lastInputTokens: asFiniteNumber(providerUsage.lastInputTokens),
-      lastCachedInputTokens: asFiniteNumber(providerUsage.lastCachedInputTokens),
-      lastOutputTokens: asFiniteNumber(providerUsage.lastOutputTokens),
-      lastReasoningOutputTokens: asFiniteNumber(providerUsage.lastReasoningOutputTokens),
-      toolUses: asFiniteNumber(providerUsage.toolUses),
-      durationMs: asFiniteNumber(providerUsage.durationMs),
-      compactsAutomatically: providerUsage.compactsAutomatically ?? null,
-      cost: providerUsage.cost ?? null,
-      autoCompactThreshold: providerUsage.autoCompactThreshold ?? null,
+      inputTokens: asFiniteNumber(providerUsage?.inputTokens),
+      cachedInputTokens: asFiniteNumber(providerUsage?.cachedInputTokens),
+      outputTokens: asFiniteNumber(providerUsage?.outputTokens),
+      reasoningOutputTokens: asFiniteNumber(providerUsage?.reasoningOutputTokens),
+      lastUsedTokens: asFiniteNumber(providerUsage?.lastUsedTokens),
+      lastInputTokens: asFiniteNumber(providerUsage?.lastInputTokens),
+      lastCachedInputTokens: asFiniteNumber(providerUsage?.lastCachedInputTokens),
+      lastOutputTokens: asFiniteNumber(providerUsage?.lastOutputTokens),
+      lastReasoningOutputTokens: asFiniteNumber(providerUsage?.lastReasoningOutputTokens),
+      toolUses: asFiniteNumber(providerUsage?.toolUses),
+      durationMs: asFiniteNumber(providerUsage?.durationMs),
+      compactsAutomatically: providerUsage?.compactsAutomatically ?? null,
+      cost: providerUsage?.cost ?? null,
+      autoCompactThreshold: providerUsage?.autoCompactThreshold ?? null,
       updatedAt: DateTime.formatIso(providerUsageUpdatedAt),
     };
   }

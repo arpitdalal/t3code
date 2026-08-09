@@ -211,6 +211,11 @@ describe("ClientSettings quit confirmation", () => {
 });
 
 describe("provider enabled defaults", () => {
+  it("keeps Kiro disabled until opted in", () => {
+    const driver = ProviderDriverKind.make("kiro");
+    expect(resolveProviderInstanceEnabled({ driver, config: {} })).toBe(false);
+    expect(resolveProviderInstanceEnabled({ driver, enabled: true, config: {} })).toBe(true);
+  });
   it("resolves instance enabled state with explicit false winning", () => {
     const grok = ProviderDriverKind.make("grok");
     const codex = ProviderDriverKind.make("codex");

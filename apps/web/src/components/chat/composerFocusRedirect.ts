@@ -1,3 +1,5 @@
+import { shouldHandleComposerAttachmentPaste } from "./composerAttachmentFiles";
+
 export const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   "input",
   "textarea",
@@ -76,8 +78,10 @@ export function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
 }
 
 export function pasteTextToFocusComposer(event: ClipboardEvent): string | null {
-  if (!event.clipboardData || event.clipboardData.files.length > 0) return null;
+  if (!event.clipboardData) return null;
   if (!shouldRedirectInputToComposer(event)) return null;
   const text = event.clipboardData.getData("text/plain");
-  return text.length > 0 ? text : null;
+  if (text.length === 0) return null;
+  if (shouldHandleComposerAttachmentPaste({ files: Array.from(event.clipboardData.files), plainText: text })) return null;
+  return text;
 }

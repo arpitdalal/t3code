@@ -21,6 +21,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpClient from "effect-acp/client";
@@ -1119,6 +1120,7 @@ export class AcpSessionRuntime extends Context.Service<
     readonly drainEvents: Effect.Effect<void>;
     readonly getModeState: Effect.Effect<AcpSessionModeState | undefined>;
     readonly getConfigOptions: Effect.Effect<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
+    readonly configOptionChanges: Stream.Stream<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
     readonly loadSession: (
       sessionId: string,
       options?: AcpSessionActivationOptions,
@@ -1248,7 +1250,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     ),
   );
   const assistantSegmentRef = yield* Ref.make<AcpAssistantSegmentState>({ nextSegmentIndex: 0 });
-  const configOptionsRef = yield* Ref.make(sessionConfigOptionsFromSetup(undefined));
+  const configOptionsRef = yield* SubscriptionRef.make(sessionConfigOptionsFromSetup(undefined));
   const initializeStateRef = yield* Ref.make<AcpInitializeState>({ _tag: "NotStarted" });
   const startStateRef = yield* Ref.make<AcpStartState>({ _tag: "NotStarted" });
   const startupMetadataRef = yield* Ref.make<ReadonlyArray<EffectAcpSchema.SessionNotification>>(
@@ -1797,7 +1799,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       value: string | boolean,
       allowUnlistedValue: boolean,
     ): Effect.fn.Return<void, EffectAcpErrors.AcpError> {
-      const configOptions = yield* Ref.get(configOptionsRef);
+      const configOptions = yield* SubscriptionRef.get(configOptionsRef);
       const configOption = findSessionConfigOption(configOptions, configId);
       if (!configOption) {
         return;
@@ -1858,7 +1860,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       | EffectAcpSchema.ResumeSessionResponse,
   ) {
     const configOptions = sessionConfigOptionsFromSetup(response);
-    yield* Ref.set(configOptionsRef, configOptions);
+    yield* SubscriptionRef.set(configOptionsRef, configOptions);
     yield* Queue.offer(eventQueue, {
       _tag: "ConfigOptionsUpdated",
       configOptions,
@@ -1901,9 +1903,9 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       sessionSetupResult.configOptions !== undefined &&
       sessionSetupResult.configOptions !== null
     ) {
-      yield* Ref.set(configOptionsRef, sessionConfigOptionsFromSetup(sessionSetupResult));
+      yield* SubscriptionRef.set(configOptionsRef, sessionConfigOptionsFromSetup(sessionSetupResult));
     } else if (!syntheticReplayIdle) {
-      yield* Ref.set(configOptionsRef, sessionConfigOptionsFromSetup(sessionSetupResult));
+      yield* SubscriptionRef.set(configOptionsRef, sessionConfigOptionsFromSetup(sessionSetupResult));
     }
     const nextState = {
       sessionId,
@@ -2006,7 +2008,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     validateConfigOptionValue(configId, value, options?.allowUnlistedValue === true).pipe(
       Effect.andThen(getStartedState),
       Effect.flatMap((started) =>
-        Ref.get(configOptionsRef).pipe(
+        SubscriptionRef.get(configOptionsRef).pipe(
           Effect.flatMap((configOptions) => {
             const existing = findSessionConfigOption(configOptions, configId);
             if (existing && configOptionCurrentValueMatches(existing, value)) {
@@ -2229,7 +2231,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     );
 
     yield* Ref.set(modeStateRef, parseSessionModeState(sessionSetupResult));
-    yield* Ref.set(configOptionsRef, sessionConfigOptionsFromSetup(sessionSetupResult));
+    yield* SubscriptionRef.set(configOptionsRef, sessionConfigOptionsFromSetup(sessionSetupResult));
 
     const nextState = {
       sessionId,
@@ -2386,7 +2388,8 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     getEvents: () => Stream.fromQueue(eventQueue),
     drainEvents,
     getModeState: Ref.get(modeStateRef),
-    getConfigOptions: Ref.get(configOptionsRef),
+    getConfigOptions: SubscriptionRef.get(configOptionsRef),
+    configOptionChanges: SubscriptionRef.changes(configOptionsRef),
     loadSession: (sessionId, activationOptions) =>
       start.pipe(
         Effect.flatMap((started) => {
@@ -2616,7 +2619,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       if (modeState?.currentModeId === modeId) {
         return {} satisfies EffectAcpSchema.SetSessionModeResponse;
       }
-      const modeConfigOption = (yield* Ref.get(configOptionsRef))?.find(
+      const modeConfigOption = (yield* SubscriptionRef.get(configOptionsRef))?.find(
         (option) => option.category === "mode" && option.type === "select",
       );
       if (modeConfigOption === undefined && modeState !== undefined) {
@@ -2719,7 +2722,7 @@ const handleSessionUpdate =
   }: {
     readonly queue: Queue.Queue<AcpSessionRuntimeEvent>;
     readonly modeStateRef: Ref.Ref<AcpSessionModeState | undefined>;
-    readonly configOptionsRef: Ref.Ref<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
+    readonly configOptionsRef: SubscriptionRef.SubscriptionRef<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
     readonly toolCallsRef: Ref.Ref<Map<string, AcpToolCallTrackedState>>;
     readonly shownToolCallIds: Set<string>;
     readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
@@ -2728,7 +2731,7 @@ const handleSessionUpdate =
   }): Effect.fn.Return<void> {
     if (params.update.sessionUpdate === "config_option_update") {
       const configOptions = params.update.configOptions;
-      yield* Ref.set(configOptionsRef, configOptions);
+      yield* SubscriptionRef.set(configOptionsRef, configOptions);
       yield* Ref.update(
         modeStateRef,
         (current) => parseSessionModeState({ configOptions }) ?? current,
