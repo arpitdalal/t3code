@@ -130,6 +130,10 @@ import {
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
+import {
+  readBrowserNotificationPermission,
+  requestBrowserNotificationPermission,
+} from "~/lib/browserNotifications";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThemeLibrary } from "./ThemeSettings";
 import {
@@ -563,6 +567,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate
         ? ["Continue threads after restarts"]
         : []),
+      ...(settings.browserAgentNotificationsEnabled !==
+      DEFAULT_UNIFIED_SETTINGS.browserAgentNotificationsEnabled
+        ? ["Agent browser notifications"]
+        : []),
       ...(isBackgroundActivityDirty ? ["Background activity"] : []),
       ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
         ? ["New thread mode"]
@@ -628,6 +636,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.enableLegacyTokenStreaming,
       settings.enableProviderUpdateChecks,
       settings.continueThreadsAfterServerUpdate,
+      settings.browserAgentNotificationsEnabled,
       settings.sidebarAutoSettleAfterDays,
       settings.sidebarAutoSettleOnMerge,
       settings.sidebarProjectGroupingMode,
@@ -750,6 +759,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       browserRecordingFrameRate: DEFAULT_UNIFIED_SETTINGS.browserRecordingFrameRate,
       browserLinkTarget: DEFAULT_UNIFIED_SETTINGS.browserLinkTarget,
       browserAutoShowFloatingPreview: DEFAULT_UNIFIED_SETTINGS.browserAutoShowFloatingPreview,
+      browserAgentNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.browserAgentNotificationsEnabled,
       // Re-granted like any other default. The confirmation dialog lists it by
       // name, so a user restoring defaults is told the agent regains access
       // rather than discovering it later.
@@ -2474,6 +2484,54 @@ export function GeneralSettingsPanel() {
                 updateSettings({ continueThreadsAfterServerUpdate: Boolean(checked) })
               }
               aria-label="Continue threads after restarts"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("agent-browser-notifications")}
+          description={
+            readBrowserNotificationPermission() === "denied"
+              ? "Browser notifications are blocked. Allow them in your browser or OS settings, then turn this on again."
+              : "Show an OS notification when an agent finishes or needs approval or input. Works on localhost once your browser allows notifications."
+          }
+          resetAction={
+            settings.browserAgentNotificationsEnabled !==
+            DEFAULT_UNIFIED_SETTINGS.browserAgentNotificationsEnabled ? (
+              <SettingResetButton
+                label="agent browser notifications"
+                onClick={() =>
+                  updateSettings({
+                    browserAgentNotificationsEnabled:
+                      DEFAULT_UNIFIED_SETTINGS.browserAgentNotificationsEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.browserAgentNotificationsEnabled}
+              onCheckedChange={(checked) => {
+                void (async () => {
+                  if (checked) {
+                    const permission = await requestBrowserNotificationPermission();
+                    if (permission !== "granted") {
+                      toastManager.add({
+                        type: "error",
+                        title: "Notifications blocked",
+                        description:
+                          permission === "unsupported"
+                            ? "This browser does not support notifications."
+                            : "Allow notifications for this site in your browser settings, then try again.",
+                      });
+                      return;
+                    }
+                  }
+                  updateSettings({ browserAgentNotificationsEnabled: Boolean(checked) });
+                })();
+              }}
+              aria-label="Agent browser notifications"
             />
           }
         />
