@@ -1,6 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { normalizeKiroSlashCommandName, parseKiroAvailableCommands } from "./KiroAcpCommands.ts";
+import {
+  buildKiroEffortExecuteParams,
+  buildKiroEffortOptionsParams,
+  normalizeKiroSlashCommandName,
+  parseKiroAvailableCommands,
+  parseKiroEffortCommandOptions,
+} from "./KiroAcpCommands.ts";
 
 describe("normalizeKiroSlashCommandName", () => {
   it("strips a leading slash and trims", () => {
@@ -42,5 +48,43 @@ describe("parseKiroAvailableCommands", () => {
         input: { hint: "add <path>, remove <path>" },
       },
     ]);
+  });
+});
+
+describe("parseKiroEffortCommandOptions", () => {
+  it("parses effort options and strips the active marker", () => {
+    expect(
+      parseKiroEffortCommandOptions({
+        options: [
+          { value: "low", label: "low" },
+          { value: "high", label: "high  [active]" },
+          { value: "max", label: "max" },
+        ],
+        hasMore: false,
+      }),
+    ).toEqual([
+      { value: "low", label: "low", isActive: false },
+      { value: "high", label: "high", isActive: true },
+      { value: "max", label: "max", isActive: false },
+    ]);
+  });
+
+  it("returns an empty list for malformed payloads", () => {
+    expect(parseKiroEffortCommandOptions(null)).toEqual([]);
+    expect(parseKiroEffortCommandOptions({ options: "nope" })).toEqual([]);
+  });
+});
+
+describe("buildKiroEffort params", () => {
+  it("builds execute and options payloads", () => {
+    expect(buildKiroEffortExecuteParams({ sessionId: "sess", effort: "max" })).toEqual({
+      sessionId: "sess",
+      command: { command: "effort", args: ["max"] },
+    });
+    expect(buildKiroEffortOptionsParams({ sessionId: "sess" })).toEqual({
+      sessionId: "sess",
+      command: "effort",
+      partialInput: "",
+    });
   });
 });
