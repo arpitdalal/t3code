@@ -20,7 +20,6 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import {
@@ -40,7 +39,12 @@ import {
   KiroCommandsAvailableNotification,
   parseKiroAvailableCommands,
 } from "../acp/KiroAcpCommands.ts";
-import { makeKiroAcpRuntime, resolveKiroAcpBaseModelId } from "../acp/KiroAcpSupport.ts";
+import {
+  EMPTY_KIRO_MODEL_CAPABILITIES,
+  enrichKiroModelsWithEffortCapabilities,
+  makeKiroAcpRuntime,
+  resolveKiroAcpBaseModelId,
+} from "../acp/KiroAcpSupport.ts";
 import { discoverKiroSkills } from "../Drivers/KiroSkills.ts";
 
 const KIRO_PRESENTATION = {
@@ -49,9 +53,7 @@ const KIRO_PRESENTATION = {
   showInteractionModeToggle: false,
   requiresNewThreadForModelChange: true,
 } as const;
-const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
-  optionDescriptors: [],
-});
+const EMPTY_CAPABILITIES: ModelCapabilities = EMPTY_KIRO_MODEL_CAPABILITIES;
 
 const VERSION_PROBE_TIMEOUT_MS = 4_000;
 const KIRO_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
@@ -164,9 +166,14 @@ const discoverKiroCapabilitiesViaAcp = (
     );
 
     const started = yield* acp.start();
-    const models = buildKiroDiscoveredModelsFromSessionModelState(
+    const discoveredModels = buildKiroDiscoveredModelsFromSessionModelState(
       started.sessionSetupResult.models,
     );
+    const models = yield* enrichKiroModelsWithEffortCapabilities({
+      runtime: acp,
+      sessionId: started.sessionId,
+      models: discoveredModels,
+    });
 
     // Commands often arrive during session/new (before start resolves). If the
     // first notification is late, wait briefly rather than leaving the picker empty.
