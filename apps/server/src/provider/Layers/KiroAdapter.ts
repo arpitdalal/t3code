@@ -54,10 +54,12 @@ import {
 import { parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import {
+  applyKiroAcpEffortSelection,
   applyKiroAcpModelSelection,
   currentKiroModelIdFromSessionSetup,
   makeKiroAcpRuntime,
   resolveKiroAcpBaseModelId,
+  resolveKiroRequestedEffortId,
 } from "../acp/KiroAcpSupport.ts";
 import { type KiroAdapterShape } from "../Services/KiroAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
@@ -110,6 +112,7 @@ interface KiroSessionContext {
    * continues it, and only the last remaining prompt settles the turn. */
   promptsInFlight: number;
   currentModelId: string | undefined;
+  currentEffortId: string | undefined;
   stopped: boolean;
 }
 
@@ -674,12 +677,21 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
           const requestedStartModelId = kiroModelSelection?.model
             ? resolveKiroAcpBaseModelId(kiroModelSelection.model)
             : undefined;
+          const previousModelId = currentKiroModelIdFromSessionSetup(started.sessionSetupResult);
           const boundModelId = yield* applyKiroAcpModelSelection({
             runtime: acp,
-            currentModelId: currentKiroModelIdFromSessionSetup(started.sessionSetupResult),
+            currentModelId: previousModelId,
             requestedModelId: requestedStartModelId,
             mapError: (cause) =>
               mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
+          });
+          const boundEffortId = yield* applyKiroAcpEffortSelection({
+            runtime: acp,
+            sessionId: started.sessionId,
+            currentEffortId: undefined,
+            requestedEffortId: resolveKiroRequestedEffortId(kiroModelSelection?.options),
+            mapError: (cause) =>
+              mapAcpToAdapterError(PROVIDER, input.threadId, "_kiro.dev/commands/execute", cause),
           });
 
           const now = yield* nowIso;
@@ -714,6 +726,7 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
             interruptedTurnIds: new Set(),
             promptsInFlight: 0,
             currentModelId: boundModelId,
+            currentEffortId: boundEffortId,
             stopped: false,
           };
 
@@ -878,12 +891,31 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
               const requestedTurnModelId = turnModelSelection?.model
                 ? resolveKiroAcpBaseModelId(turnModelSelection.model)
                 : undefined;
+              const previousModelId = ctx.currentModelId;
               const currentModelId = yield* applyKiroAcpModelSelection({
                 runtime: ctx.acp,
-                currentModelId: ctx.currentModelId,
+                currentModelId: previousModelId,
                 requestedModelId: requestedTurnModelId,
                 mapError: (cause) =>
                   mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
+              });
+              if (currentModelId !== previousModelId) {
+                // Model switches reset Kiro's session effort; re-apply below.
+                ctx.currentEffortId = undefined;
+              }
+              ctx.currentModelId = currentModelId;
+              ctx.currentEffortId = yield* applyKiroAcpEffortSelection({
+                runtime: ctx.acp,
+                sessionId: ctx.acpSessionId,
+                currentEffortId: ctx.currentEffortId,
+                requestedEffortId: resolveKiroRequestedEffortId(turnModelSelection?.options),
+                mapError: (cause) =>
+                  mapAcpToAdapterError(
+                    PROVIDER,
+                    input.threadId,
+                    "_kiro.dev/commands/execute",
+                    cause,
+                  ),
               });
 
               const text = input.input?.trim();
