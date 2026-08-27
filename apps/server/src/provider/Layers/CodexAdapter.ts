@@ -415,6 +415,13 @@ function mcpToolPresentation(
   }
 
   return {};
+/** True when the user message is a manual `/compact` command (optional trailing args). */
+export function isCodexManualCompactCommand(input: string | undefined): boolean {
+  const trimmed = input?.trim();
+  if (!trimmed) {
+    return false;
+  }
+  return /^\/compact(?:\s|$)/iu.test(trimmed);
 }
 
 const FATAL_CODEX_STDERR_SNIPPETS = ["failed to connect to websocket"];
@@ -2509,6 +2516,19 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   });
 
   const sendTurn: CodexAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
+    const session = yield* requireSession(input.threadId);
+    const compactCommand =
+      (input.attachments?.length ?? 0) === 0 && isCodexManualCompactCommand(input.input);
+    if (compactCommand) {
+      return yield* session.runtime
+        .startCompact()
+        .pipe(
+          Effect.mapError((cause) =>
+            mapCodexRuntimeError(input.threadId, "thread/compact/start", cause),
+          ),
+        );
+    }
+
     // Codex ingests images only. Anything else would be base64-encoded as an
     // image and rejected or misread; generic files reach the agent through the
     // path line ProviderService puts in the prompt.
@@ -2518,7 +2538,6 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       { concurrency: 1 },
     );
 
-    const session = yield* requireSession(input.threadId);
     const reasoningEffort =
       input.modelSelection?.instanceId === boundInstanceId
         ? getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort")

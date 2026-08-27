@@ -78,3 +78,10 @@ In an existing Codex thread, send `/feedback` with an optional description, for
 example `/feedback The agent stopped before finishing the tests`. This uploads
 the conversation and Codex logs to OpenAI. The returned thread ID can be shared
 with OpenAI support.
+
+## Reduce context usage
+
+Send `/compact` in an existing Codex thread, or select **Compact context** from the
+context meter on web and desktop. T3 Code asks Codex to summarize the conversation
+and free context space. Codex also compacts automatically when the thread approaches
+the model's context window.
