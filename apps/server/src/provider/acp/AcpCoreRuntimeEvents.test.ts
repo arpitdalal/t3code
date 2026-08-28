@@ -7,6 +7,7 @@ import {
   makeAcpPlanUpdatedEvent,
   makeAcpRequestOpenedEvent,
   makeAcpRequestResolvedEvent,
+  makeAcpTokenUsageEvent,
   makeAcpToolCallEvent,
 } from "./AcpCoreRuntimeEvents.ts";
 
@@ -219,6 +220,33 @@ describe("AcpCoreRuntimeEvents", () => {
       payload: {
         itemType: "assistant_message",
         status: "inProgress",
+      },
+    });
+
+    expect(
+      makeAcpTokenUsageEvent({
+        stamp,
+        provider: ProviderDriverKind.make("kiro"),
+        threadId: "thread-1" as never,
+        turnId,
+        usage: {
+          usedTokens: 1200,
+          maxTokens: 200_000,
+          compactsAutomatically: true,
+        },
+        rawPayload: { sessionId: "session-1" },
+      }),
+    ).toMatchObject({
+      type: "thread.token-usage.updated",
+      provider: "kiro",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      payload: {
+        usage: {
+          usedTokens: 1200,
+          maxTokens: 200_000,
+          compactsAutomatically: true,
+        },
       },
     });
   });
