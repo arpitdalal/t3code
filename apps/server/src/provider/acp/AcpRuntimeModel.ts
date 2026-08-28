@@ -120,8 +120,18 @@ export type AcpParsedSessionEvent =
       readonly rawPayload: unknown;
     }
   | {
+  | {
       readonly _tag: "ThoughtDelta";
       readonly text: string;
+      readonly rawPayload: unknown;
+    }
+  | {
+      readonly _tag: "UsageUpdated";
+      readonly usage: {
+        readonly used: number;
+        readonly size?: number;
+        readonly cost?: EffectAcpSchema.Cost | null;
+      };
       readonly rawPayload: unknown;
     };
 
@@ -868,7 +878,6 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
         });
       }
       break;
-    }
     case "agent_thought_chunk": {
       if (upd.content.type === "text" && upd.content.text.length > 0) {
         events.push({
@@ -878,6 +887,23 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
         });
       }
       break;
+    }
+    case "usage_update": {
+      if (typeof upd.used === "number" && Number.isFinite(upd.used) && upd.used >= 0) {
+        events.push({
+          _tag: "UsageUpdated",
+          usage: {
+            used: upd.used,
+            ...(typeof upd.size === "number" && Number.isFinite(upd.size) && upd.size > 0
+              ? { size: upd.size }
+              : {}),
+            ...(upd.cost ? { cost: upd.cost } : {}),
+          },
+          rawPayload: params,
+        });
+      }
+      break;
+    }
     }
     default:
       break;

@@ -10,6 +10,7 @@ import {
   ProviderInstanceId,
   RuntimeRequestId,
   type ThreadId,
+  type ThreadTokenUsageSnapshot,
   TurnId,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
@@ -49,10 +50,19 @@ import {
   makeAcpPlanUpdatedEvent,
   makeAcpRequestOpenedEvent,
   makeAcpRequestResolvedEvent,
+  makeAcpTokenUsageEvent,
   makeAcpToolCallEvent,
 } from "../acp/AcpCoreRuntimeEvents.ts";
 import { parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
+import {
+  KIRO_METADATA_METHOD,
+  KIRO_METADATA_METHOD_ALT,
+  KiroMetadataNotification,
+  normalizeKiroMetadataUsage,
+  normalizeKiroPromptResponseUsage,
+  normalizeKiroUsageUpdate,
+} from "../acp/KiroAcpCommands.ts";
 import {
   applyKiroAcpEffortSelection,
   applyKiroAcpModelSelection,
@@ -104,6 +114,8 @@ interface KiroSessionContext {
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
   turns: Array<{ id: TurnId; items: Array<unknown> }>;
   lastPlanFingerprint: string | undefined;
+  lastKnownTokenUsage?: ThreadTokenUsageSnapshot;
+  lastKnownContextWindow?: number;
   activeTurnId: TurnId | undefined;
   /** Turns already interrupted; late prompt RPCs must not resurrect them. */
   interruptedTurnIds: Set<TurnId>;
@@ -667,6 +679,51 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
                 }),
               ),
             );
+
+            const handleKiroMetadata = (params: unknown) =>
+              mapAcpCallbackFailure(
+                Effect.gen(function* () {
+                  yield* logNative(
+                    input.threadId,
+                    "_kiro.dev/metadata",
+                    params,
+                    "acp.kiro.extension",
+                  );
+                  const ctx = sessions.get(input.threadId);
+                  if (!ctx || ctx.stopped) return;
+                  const usage = normalizeKiroMetadataUsage(params, ctx);
+                  if (!usage) return;
+                  ctx.lastKnownTokenUsage = usage;
+                  if (usage.maxTokens) {
+                    ctx.lastKnownContextWindow = usage.maxTokens;
+                  }
+                  const turnId = resolveNotificationTurnId(ctx);
+                  yield* offerRuntimeEvent(
+                    makeAcpTokenUsageEvent({
+                      stamp: yield* makeEventStamp(),
+                      provider: PROVIDER,
+                      threadId: ctx.threadId,
+                      turnId,
+                      usage,
+                      source: "acp.kiro.extension",
+                      method: "_kiro.dev/metadata",
+                      rawPayload: params,
+                    }),
+                  );
+                }),
+              );
+
+            yield* acp.handleExtNotification(
+              KIRO_METADATA_METHOD,
+              KiroMetadataNotification,
+              handleKiroMetadata,
+            );
+            yield* acp.handleExtNotification(
+              KIRO_METADATA_METHOD_ALT,
+              KiroMetadataNotification,
+              handleKiroMetadata,
+            );
+
             return yield* acp.start();
           }).pipe(
             Effect.mapError((error) =>
@@ -740,12 +797,37 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
                 if (
                   event._tag === "PlanUpdated" ||
                   event._tag === "ToolCallUpdated" ||
-                  event._tag === "ContentDelta"
+                  event._tag === "ContentDelta" ||
+                  event._tag === "UsageUpdated"
                 ) {
                   yield* logNative(ctx.threadId, "session/update", event.rawPayload);
                 }
 
                 if (event._tag === "ModeChanged") {
+                  return;
+                }
+
+                if (event._tag === "UsageUpdated") {
+                  const stamp = yield* makeEventStamp();
+                  const usage = normalizeKiroUsageUpdate(event.usage, ctx);
+                  if (usage) {
+                    ctx.lastKnownTokenUsage = usage;
+                    if (usage.maxTokens) {
+                      ctx.lastKnownContextWindow = usage.maxTokens;
+                    }
+                    yield* offerRuntimeEvent(
+                      makeAcpTokenUsageEvent({
+                        stamp,
+                        provider: PROVIDER,
+                        threadId: ctx.threadId,
+                        turnId: resolveNotificationTurnId(ctx),
+                        usage,
+                        source: "acp.jsonrpc",
+                        method: "session/update",
+                        rawPayload: event.rawPayload,
+                      }),
+                    );
+                  }
                   return;
                 }
 
@@ -1147,6 +1229,27 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
                   ...(prepared.displayModel ? { model: prepared.displayModel } : {}),
                 };
                 const completedStopReason = completedStopReasonFromPromptResponse(result);
+                if (result.usage) {
+                  const promptUsage = normalizeKiroPromptResponseUsage(result.usage, ctx);
+                  if (promptUsage) {
+                    ctx.lastKnownTokenUsage = promptUsage;
+                    if (promptUsage.maxTokens) {
+                      ctx.lastKnownContextWindow = promptUsage.maxTokens;
+                    }
+                    yield* offerRuntimeEvent(
+                      makeAcpTokenUsageEvent({
+                        stamp: yield* makeEventStamp(),
+                        provider: PROVIDER,
+                        threadId: input.threadId,
+                        turnId: prepared.turnId,
+                        usage: promptUsage,
+                        source: "acp.jsonrpc",
+                        method: "session/prompt",
+                        rawPayload: result,
+                      }),
+                    );
+                  }
+                }
                 yield* offerRuntimeEvent({
                   type: "turn.completed",
                   ...(yield* makeEventStamp()),
@@ -1215,6 +1318,27 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
                       prepared.promptParts,
                       promptResult,
                     );
+                    if (promptResult.usage) {
+                      const promptUsage = normalizeKiroPromptResponseUsage(promptResult.usage, ctx);
+                      if (promptUsage) {
+                        ctx.lastKnownTokenUsage = promptUsage;
+                        if (promptUsage.maxTokens) {
+                          ctx.lastKnownContextWindow = promptUsage.maxTokens;
+                        }
+                        yield* offerRuntimeEvent(
+                          makeAcpTokenUsageEvent({
+                            stamp: yield* makeEventStamp(),
+                            provider: PROVIDER,
+                            threadId: input.threadId,
+                            turnId: prepared.turnId,
+                            usage: promptUsage,
+                            source: "acp.jsonrpc",
+                            method: "session/prompt",
+                            rawPayload: promptResult,
+                          }),
+                        );
+                      }
+                    }
                     yield* settlePromptInFlight(
                       input.threadId,
                       prepared.turnId,
