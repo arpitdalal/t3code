@@ -34,6 +34,9 @@ const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATE
 const waitForResumeRelease = process.env.T3_ACP_WAIT_FOR_RESUME_RELEASE === "1";
 const completeFirstPromptOnCancel = process.env.T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL === "1";
 const floodStderr = process.env.T3_ACP_FLOOD_STDERR === "1";
+const emitUsageUpdate = process.env.T3_ACP_EMIT_USAGE_UPDATE === "1";
+const emitKiroMetadata = process.env.T3_ACP_EMIT_KIRO_METADATA === "1";
+const emitPromptUsage = process.env.T3_ACP_EMIT_PROMPT_USAGE === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
 const hangFirstPromptForever = process.env.T3_ACP_HANG_FIRST_PROMPT_FOREVER === "1";
 const emitLateUpdateAfterCancel = process.env.T3_ACP_EMIT_LATE_UPDATE_AFTER_CANCEL === "1";
@@ -1221,6 +1224,25 @@ const program = Effect.gen(function* () {
         },
       });
 
+      if (emitUsageUpdate) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "usage_update",
+            used: Number(process.env.T3_ACP_USAGE_USED ?? "1234"),
+            size: Number(process.env.T3_ACP_USAGE_SIZE ?? "200000"),
+          },
+        });
+      }
+
+      if (emitKiroMetadata) {
+        writeJsonRpcNotification("_kiro.dev/metadata", {
+          sessionId: requestedSessionId,
+          contextUsagePercentage: Number(process.env.T3_ACP_KIRO_PERCENTAGE ?? "35.5"),
+          turnDurationMs: 1200,
+        });
+      }
+
       yield* agent.client.sessionUpdate({
         sessionId: requestedSessionId,
         update: {
@@ -1228,6 +1250,18 @@ const program = Effect.gen(function* () {
           content: { type: "text", text: promptResponseText ?? "hello from mock" },
         },
       });
+
+      if (emitPromptUsage) {
+        return {
+          stopReason: "end_turn",
+          usage: {
+            inputTokens: 500,
+            outputTokens: 120,
+            totalTokens: 620,
+            cachedReadTokens: 200,
+          },
+        };
+      }
 
       return { stopReason: "end_turn" };
     }),

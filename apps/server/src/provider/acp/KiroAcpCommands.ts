@@ -12,9 +12,10 @@
  *
  * @module provider/acp/KiroAcpCommands
  */
-import type { ServerProviderSlashCommand } from "@t3tools/contracts";
+import type { ServerProviderSlashCommand, ThreadTokenUsageSnapshot } from "@t3tools/contracts";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
+import type * as EffectAcpSchema from "effect-acp/schema";
 
 const KiroAvailableCommandMeta = Schema.Struct({
   hint: Schema.optional(Schema.String),
@@ -148,5 +149,164 @@ export function buildKiroEffortOptionsParams(input: {
     sessionId: input.sessionId,
     command: KIRO_EFFORT_COMMAND,
     partialInput: input.partialInput ?? "",
+  };
+}
+
+export const KIRO_METADATA_METHOD = "_kiro.dev/metadata";
+export const KIRO_METADATA_METHOD_ALT = "kiro.dev/metadata";
+
+export const KiroMetadataNotification = Schema.Struct({
+  sessionId: Schema.String,
+  contextUsagePercentage: Schema.optional(Schema.Number),
+  turnDurationMs: Schema.optional(Schema.Number),
+  usedTokens: Schema.optional(Schema.Number),
+  maxTokens: Schema.optional(Schema.Number),
+  totalTokens: Schema.optional(Schema.Number),
+  meteringUsage: Schema.optional(Schema.Array(Schema.Unknown)),
+});
+
+export type KiroMetadataNotification = typeof KiroMetadataNotification.Type;
+
+export function normalizeKiroUsageUpdate(
+  usage: {
+    readonly used: number;
+    readonly size?: number;
+    readonly cost?: unknown;
+  },
+  context?: {
+    readonly lastKnownTokenUsage?: ThreadTokenUsageSnapshot;
+    readonly lastKnownContextWindow?: number;
+  },
+): ThreadTokenUsageSnapshot | undefined {
+  const usedTokens = Math.round(usage.used);
+  if (!Number.isFinite(usedTokens) || usedTokens < 0) {
+    return undefined;
+  }
+  const maxTokens =
+    typeof usage.size === "number" && Number.isFinite(usage.size) && usage.size > 0
+      ? Math.round(usage.size)
+      : (context?.lastKnownContextWindow ?? context?.lastKnownTokenUsage?.maxTokens);
+
+  return {
+    usedTokens,
+    lastUsedTokens: usedTokens,
+    ...(maxTokens !== undefined && maxTokens > 0 ? { maxTokens } : {}),
+    compactsAutomatically: true,
+  };
+}
+
+export function normalizeKiroMetadataUsage(
+  notification: unknown,
+  context?: {
+    readonly lastKnownTokenUsage?: ThreadTokenUsageSnapshot;
+    readonly lastKnownContextWindow?: number;
+  },
+): ThreadTokenUsageSnapshot | undefined {
+  if (!notification || typeof notification !== "object") {
+    return undefined;
+  }
+  const record = notification as Record<string, unknown>;
+  const explicitUsed =
+    typeof record.usedTokens === "number" &&
+    Number.isFinite(record.usedTokens) &&
+    record.usedTokens >= 0
+      ? Math.round(record.usedTokens)
+      : undefined;
+  const explicitMax =
+    typeof record.maxTokens === "number" &&
+    Number.isFinite(record.maxTokens) &&
+    record.maxTokens > 0
+      ? Math.round(record.maxTokens)
+      : undefined;
+  let maxTokens =
+    explicitMax ?? context?.lastKnownContextWindow ?? context?.lastKnownTokenUsage?.maxTokens;
+
+  let usedTokens = explicitUsed;
+  if (
+    usedTokens === undefined &&
+    typeof record.contextUsagePercentage === "number" &&
+    Number.isFinite(record.contextUsagePercentage) &&
+    record.contextUsagePercentage >= 0
+  ) {
+    const rawPct = record.contextUsagePercentage;
+    const pct = rawPct > 0 && rawPct <= 1 ? rawPct * 100 : rawPct;
+    const effectiveMax = maxTokens ?? 200_000;
+    usedTokens = Math.max(1, Math.round(effectiveMax * (pct / 100)));
+    if (maxTokens === undefined) {
+      maxTokens = effectiveMax;
+    }
+  }
+
+  if (usedTokens === undefined || usedTokens < 0) {
+    return undefined;
+  }
+
+  const durationMs =
+    typeof record.turnDurationMs === "number" &&
+    Number.isFinite(record.turnDurationMs) &&
+    record.turnDurationMs >= 0
+      ? Math.round(record.turnDurationMs)
+      : undefined;
+
+  return {
+    usedTokens,
+    lastUsedTokens: usedTokens,
+    ...(maxTokens !== undefined && maxTokens > 0 ? { maxTokens } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {}),
+    compactsAutomatically: true,
+  };
+}
+
+export function normalizeKiroPromptResponseUsage(
+  usage: EffectAcpSchema.Usage | undefined | null,
+  context?: {
+    readonly lastKnownTokenUsage?: ThreadTokenUsageSnapshot;
+    readonly lastKnownContextWindow?: number;
+  },
+): ThreadTokenUsageSnapshot | undefined {
+  if (!usage || typeof usage !== "object") return undefined;
+  const inputTokens =
+    typeof usage.inputTokens === "number" && usage.inputTokens >= 0 ? usage.inputTokens : undefined;
+  const outputTokens =
+    typeof usage.outputTokens === "number" && usage.outputTokens >= 0
+      ? usage.outputTokens
+      : undefined;
+  const totalTokens =
+    typeof usage.totalTokens === "number" && usage.totalTokens >= 0 ? usage.totalTokens : undefined;
+  const cachedInputTokens =
+    typeof usage.cachedReadTokens === "number" && usage.cachedReadTokens >= 0
+      ? usage.cachedReadTokens
+      : undefined;
+  const reasoningOutputTokens =
+    typeof usage.thoughtTokens === "number" && usage.thoughtTokens >= 0
+      ? usage.thoughtTokens
+      : undefined;
+
+  const usedTokens =
+    totalTokens ??
+    (inputTokens !== undefined && outputTokens !== undefined
+      ? inputTokens + outputTokens
+      : undefined) ??
+    context?.lastKnownTokenUsage?.usedTokens;
+  if (usedTokens === undefined || usedTokens <= 0) {
+    return undefined;
+  }
+
+  const maxTokens = context?.lastKnownContextWindow ?? context?.lastKnownTokenUsage?.maxTokens;
+
+  return {
+    usedTokens,
+    lastUsedTokens: usedTokens,
+    ...(totalTokens !== undefined ? { totalProcessedTokens: totalTokens } : {}),
+    ...(maxTokens !== undefined && maxTokens > 0 ? { maxTokens } : {}),
+    ...(inputTokens !== undefined ? { inputTokens, lastInputTokens: inputTokens } : {}),
+    ...(cachedInputTokens !== undefined
+      ? { cachedInputTokens, lastCachedInputTokens: cachedInputTokens }
+      : {}),
+    ...(outputTokens !== undefined ? { outputTokens, lastOutputTokens: outputTokens } : {}),
+    ...(reasoningOutputTokens !== undefined
+      ? { reasoningOutputTokens, lastReasoningOutputTokens: reasoningOutputTokens }
+      : {}),
+    compactsAutomatically: true,
   };
 }

@@ -378,6 +378,38 @@ describe("AcpRuntimeModel", () => {
     }
   });
 
+  it("projects typed ACP usage updates", () => {
+    const usageResult = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update",
+        used: 1250,
+        size: 200_000,
+        cost: { amount: 0.042, currency: "USD" },
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    expect(usageResult.events).toEqual([
+      {
+        _tag: "UsageUpdated",
+        usage: {
+          used: 1250,
+          size: 200_000,
+          cost: { amount: 0.042, currency: "USD" },
+        },
+        rawPayload: {
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "usage_update",
+            used: 1250,
+            size: 200_000,
+            cost: { amount: 0.042, currency: "USD" },
+          },
+        },
+      },
+    ]);
+  });
+
   it("keeps permission request parsing compatible with loose extension payloads", () => {
     const request = parsePermissionRequest({
       sessionId: "session-1",

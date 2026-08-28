@@ -3887,6 +3887,53 @@ describe("ProviderRuntimeIngestion", () => {
     });
   });
 
+  it("projects Kiro token usage payloads into normalized thread activities", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-thread-token-usage-updated-kiro"),
+      provider: ProviderDriverKind.make("kiro"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        usage: {
+          usedTokens: 42_000,
+          lastUsedTokens: 42_000,
+          maxTokens: 200_000,
+          compactsAutomatically: true,
+          durationMs: 1500,
+        },
+      },
+      raw: {
+        source: "acp.kiro.extension",
+        method: "_kiro.dev/metadata",
+        payload: {
+          contextUsagePercentage: 21,
+          turnDurationMs: 1500,
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.kind === "context-window.updated",
+      ),
+    );
+
+    const usageActivity = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.kind === "context-window.updated",
+    );
+    expect(usageActivity?.payload).toMatchObject({
+      usedTokens: 42_000,
+      lastUsedTokens: 42_000,
+      maxTokens: 200_000,
+      compactsAutomatically: true,
+      durationMs: 1500,
+    });
+  });
+
   it("projects compacted thread state into context compaction activities", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

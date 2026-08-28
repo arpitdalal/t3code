@@ -56,6 +56,7 @@ import {
   makeAcpPlanUpdatedEvent,
   makeAcpRequestOpenedEvent,
   makeAcpRequestResolvedEvent,
+  makeAcpTokenUsageEvent,
   makeAcpToolCallEvent,
 } from "../acp/AcpCoreRuntimeEvents.ts";
 import { parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
@@ -1327,6 +1328,33 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 }
 
                 if (event._tag === "ModeChanged") {
+                  return;
+                }
+
+                if (event._tag === "UsageUpdated") {
+                  const stamp = yield* makeEventStamp();
+                  const usedTokens = Math.round(event.usage.used);
+                  if (Number.isFinite(usedTokens) && usedTokens >= 0) {
+                    yield* offerRuntimeEvent(
+                      makeAcpTokenUsageEvent({
+                        stamp,
+                        provider: PROVIDER,
+                        threadId: ctx.threadId,
+                        turnId: resolveNotificationTurnId(ctx),
+                        usage: {
+                          usedTokens,
+                          lastUsedTokens: usedTokens,
+                          ...(event.usage.size && event.usage.size > 0
+                            ? { maxTokens: Math.round(event.usage.size) }
+                            : {}),
+                          compactsAutomatically: true,
+                        },
+                        source: "acp.jsonrpc",
+                        method: "session/update",
+                        rawPayload: event.rawPayload,
+                      }),
+                    );
+                  }
                   return;
                 }
 

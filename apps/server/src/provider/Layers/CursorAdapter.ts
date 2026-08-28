@@ -58,6 +58,7 @@ import {
   makeAcpPlanUpdatedEvent,
   makeAcpRequestOpenedEvent,
   makeAcpRequestResolvedEvent,
+  makeAcpTokenUsageEvent,
   makeAcpToolCallEvent,
 } from "../acp/AcpCoreRuntimeEvents.ts";
 import {
@@ -888,6 +889,37 @@ export function makeCursorAdapter(
                       }),
                     );
                     return;
+                  case "UsageUpdated": {
+                    yield* logNative(
+                      ctx.threadId,
+                      "session/update",
+                      event.rawPayload,
+                      "acp.jsonrpc",
+                    );
+                    const usedTokens = Math.round(event.usage.used);
+                    if (Number.isFinite(usedTokens) && usedTokens >= 0) {
+                      yield* offerRuntimeEvent(
+                        makeAcpTokenUsageEvent({
+                          stamp: yield* makeEventStamp(),
+                          provider: PROVIDER,
+                          threadId: ctx.threadId,
+                          turnId: ctx.activeTurnId,
+                          usage: {
+                            usedTokens,
+                            lastUsedTokens: usedTokens,
+                            ...(event.usage.size && event.usage.size > 0
+                              ? { maxTokens: Math.round(event.usage.size) }
+                              : {}),
+                            compactsAutomatically: true,
+                          },
+                          source: "acp.jsonrpc",
+                          method: "session/update",
+                          rawPayload: event.rawPayload,
+                        }),
+                      );
+                    }
+                    return;
+                  }
                 }
               }),
             ),
