@@ -415,6 +415,7 @@ function mcpToolPresentation(
   }
 
   return {};
+}
 /** True when the user message is a manual `/compact` command (optional trailing args). */
 export function isCodexManualCompactCommand(input: string | undefined): boolean {
   const trimmed = input?.trim();

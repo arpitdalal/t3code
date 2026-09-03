@@ -327,6 +327,7 @@ export const ClientSettingsSchema = Schema.Struct({
   /** Profile new tabs open under. Falls back to Default if it no longer exists. */
   browserDefaultProfileId: BrowserProfileId.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BROWSER_PROFILE_ID)),
+  ),
   /** OS/browser alerts when an agent finishes or needs approval or input. */
   browserAgentNotificationsEnabled: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),

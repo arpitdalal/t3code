@@ -120,7 +120,6 @@ export type AcpParsedSessionEvent =
       readonly rawPayload: unknown;
     }
   | {
-  | {
       readonly _tag: "ThoughtDelta";
       readonly text: string;
       readonly rawPayload: unknown;
@@ -878,6 +877,7 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
         });
       }
       break;
+    }
     case "agent_thought_chunk": {
       if (upd.content.type === "text" && upd.content.text.length > 0) {
         events.push({
@@ -903,7 +903,6 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
         });
       }
       break;
-    }
     }
     default:
       break;
