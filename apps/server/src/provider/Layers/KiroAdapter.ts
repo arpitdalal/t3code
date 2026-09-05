@@ -683,12 +683,7 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
             const handleKiroMetadata = (params: unknown) =>
               mapAcpCallbackFailure(
                 Effect.gen(function* () {
-                  yield* logNative(
-                    input.threadId,
-                    "_kiro.dev/metadata",
-                    params,
-                    "acp.kiro.extension",
-                  );
+                  yield* logNative(input.threadId, "_kiro.dev/metadata", params);
                   const ctx = sessions.get(input.threadId);
                   if (!ctx || ctx.stopped) return;
                   const usage = normalizeKiroMetadataUsage(params, ctx);
