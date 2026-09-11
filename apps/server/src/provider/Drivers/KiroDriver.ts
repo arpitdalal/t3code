@@ -33,6 +33,7 @@ import {
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
+import { discoverKiroSkills } from "./KiroSkills.ts";
 const decodeKiroSettings = Schema.decodeSync(KiroSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("kiro");
@@ -127,6 +128,18 @@ export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
         ),
       );
 
+      // Machine health check uses process.cwd(); project skills live under the
+      // thread workspace. Mirror Claude/Cursor: rediscover when the registry
+      // asks for a cwd-scoped snapshot so `$` / `/` menus see `.kiro/skills`.
+      const snapshotForCwd = (cwd: string) =>
+        !effectiveConfig.enabled
+          ? snapshot.getSnapshot
+          : Effect.all([snapshot.getSnapshot, discoverKiroSkills(cwd, processEnv)]).pipe(
+              Effect.map(([machineSnapshot, skills]) => ({ ...machineSnapshot, skills })),
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, pathService),
+            );
+
       return {
         instanceId,
         driverKind: DRIVER_KIND,
@@ -135,6 +148,7 @@ export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
         accentColor,
         enabled,
         snapshot,
+        snapshotForCwd,
         adapter,
         textGeneration,
       } satisfies ProviderInstance;
