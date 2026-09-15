@@ -24,6 +24,7 @@ import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import {
   buildServerProvider,
+  COMPACT_SLASH_COMMAND,
   isCommandMissingCause,
   parseGenericCliVersion,
   providerModelsFromSettings,
@@ -52,6 +53,7 @@ const KIRO_PRESENTATION = {
   badgeLabel: "Early Access",
   showInteractionModeToggle: false,
   requiresNewThreadForModelChange: true,
+  reportsContextWindow: true,
 } as const;
 const EMPTY_CAPABILITIES: ModelCapabilities = EMPTY_KIRO_MODEL_CAPABILITIES;
 
@@ -112,6 +114,16 @@ function kiroModelsFromSettings(
   builtInModels: ReadonlyArray<ServerProviderModel> = KIRO_BUILT_IN_MODELS,
 ): ReadonlyArray<ServerProviderModel> {
   return providerModelsFromSettings(builtInModels, customModels ?? [], EMPTY_CAPABILITIES);
+}
+
+/** Prefer ACP-advertised `/compact`; fall back to the shared compact command. */
+function withKiroCompactSlashCommand(
+  commands: ReadonlyArray<ServerProviderSlashCommand>,
+): ReadonlyArray<ServerProviderSlashCommand> {
+  if (commands.some((command) => command.name.toLowerCase() === COMPACT_SLASH_COMMAND.name)) {
+    return commands;
+  }
+  return [COMPACT_SLASH_COMMAND, ...commands];
 }
 
 function buildKiroDiscoveredModelsFromSessionModelState(
@@ -360,7 +372,7 @@ export const checkKiroProviderStatus = Effect.fn("checkKiroProviderStatus")(func
     checkedAt,
     models,
     skills,
-    slashCommands: discovered.slashCommands,
+    slashCommands: withKiroCompactSlashCommand(discovered.slashCommands),
     probe: {
       installed: true,
       version,

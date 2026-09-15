@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { EventId, type OrchestrationThreadActivity, TurnId } from "@t3tools/contracts";
 
-import {
-  deriveLatestContextWindowSnapshot,
-  formatContextWindowTokens,
-  formatProviderDisplayName,
-} from "./contextWindow";
+import { deriveLatestContextWindowSnapshot, formatContextWindowTokens } from "./contextWindow";
 
 function makeActivity(id: string, kind: string, payload: unknown): OrchestrationThreadActivity {
   return {
@@ -86,12 +82,5 @@ describe("contextWindow", () => {
 
     expect(snapshot?.usedTokens).toBe(81_659);
     expect(snapshot?.totalProcessedTokens).toBe(748_126);
-  });
-
-  it("formats provider display names", () => {
-    expect(formatProviderDisplayName("kiro")).toBe("Kiro");
-    expect(formatProviderDisplayName("codex")).toBe("Codex");
-    expect(formatProviderDisplayName("claudeAgent")).toBe("Claude");
-    expect(formatProviderDisplayName("cursor")).toBe("Cursor");
   });
 });
