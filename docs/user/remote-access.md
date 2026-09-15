@@ -108,6 +108,31 @@ tailscale serve --https=443 off
 If that port is already in use, choose another with
 `--tailscale-serve-port`. See `t3 pair --help` for other pairing options.
 
+#### Dev server (`vp run dev`)
+
+Prefer `vp run dev --share`. It publishes Vite over Tailscale using a
+`localhost` target so the mapping matches how Node binds loopback.
+
+`npx t3 pair --tailscale` against a Vite-backed `vp run dev` can fail with a
+pairing error on the phone: that path proxies to `127.0.0.1`, while Vite often
+listens only on IPv6 (`::1`), so Tailscale Serve returns 502. Keep the stack
+running and repair the mapping, then mint without `--tailscale`:
+
+```bash
+# web port from the [dev-runner] line or server-runtime.json's devUrl
+tailscale serve --bg --https=443 http://localhost:5733
+
+npx t3 pair --ttl 24h
+```
+
+Ignore the printed `http://localhost:…` pairing URL. Use your MagicDNS host
+with the printed token:
+
+`https://<machine>.tailnet.ts.net/pair#token=<token>`
+
+Confirm Tailscale is connected on both devices before pairing. A successful
+pair authorizes that phone for later reconnects; the token itself is one-time.
+
 ### Hosted web app
 
 [app.t3.codes](https://app.t3.codes) needs an HTTPS endpoint. It connects directly
