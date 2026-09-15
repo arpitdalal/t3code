@@ -1534,6 +1534,7 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
     return {
       provider: PROVIDER,
       capabilities: { sessionModelSwitch: "in-session" },
+      compaction: { type: "slash-command", command: "/compact" },
       startSession,
       sendTurn,
       interruptTurn,
