@@ -6,9 +6,33 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { KiroSettings } from "@t3tools/contracts";
 
-import { buildInitialKiroProviderSnapshot, checkKiroProviderStatus } from "./KiroProvider.ts";
+import {
+  buildInitialKiroProviderSnapshot,
+  checkKiroProviderStatus,
+  withKiroCompactSlashCommand,
+} from "./KiroProvider.ts";
 
 const decodeKiroSettings = Schema.decodeSync(KiroSettings);
+
+describe("withKiroCompactSlashCommand", () => {
+  it("always prepends canonical compact", () => {
+    expect(withKiroCompactSlashCommand([]).map((command) => command.name)).toEqual(["compact"]);
+    expect(
+      withKiroCompactSlashCommand([{ name: "agent", description: "Switch agent" }]).map(
+        (command) => command.name,
+      ),
+    ).toEqual(["compact", "agent"]);
+  });
+
+  it("normalizes ACP Compact casing to compact", () => {
+    expect(
+      withKiroCompactSlashCommand([
+        { name: "Compact", description: "Kiro native compact" },
+        { name: "agent" },
+      ]),
+    ).toEqual([{ name: "compact", description: "Kiro native compact" }, { name: "agent" }]);
+  });
+});
 
 describe("buildInitialKiroProviderSnapshot", () => {
   it.effect("returns a disabled snapshot when settings.enabled is false", () =>
@@ -20,10 +44,11 @@ describe("buildInitialKiroProviderSnapshot", () => {
       expect(snapshot.status).toBe("disabled");
       expect(snapshot.installed).toBe(false);
       expect(snapshot.message).toContain("disabled");
+      expect(snapshot.slashCommands).toEqual([]);
     }),
   );
 
-  it.effect("returns a pending snapshot by default", () =>
+  it.effect("returns a pending snapshot with /compact available", () =>
     Effect.gen(function* () {
       const snapshot = yield* buildInitialKiroProviderSnapshot(decodeKiroSettings({}));
       expect(snapshot.enabled).toBe(true);
@@ -32,6 +57,7 @@ describe("buildInitialKiroProviderSnapshot", () => {
       expect(snapshot.version).toBeNull();
       expect(snapshot.message).toContain("Checking Kiro");
       expect(snapshot.requiresNewThreadForModelChange).toBe(true);
+      expect(snapshot.slashCommands.map((command) => command.name)).toEqual(["compact"]);
     }),
   );
 });
@@ -49,6 +75,7 @@ it.layer(NodeServices.layer)("checkKiroProviderStatus", (it) => {
       expect(snapshot.installed).toBe(false);
       expect(snapshot.status).toBe("error");
       expect(snapshot.message).toMatch(/not installed|not on PATH|Failed to execute/);
+      expect(snapshot.slashCommands).toEqual([]);
     }),
   );
 
@@ -78,10 +105,11 @@ it.layer(NodeServices.layer)("checkKiroProviderStatus", (it) => {
       expect(snapshot.status).toBe("error");
       expect(snapshot.message).toBe("Kiro CLI is installed but failed to run.");
       expect(snapshot.message).not.toContain(secretStderr);
+      expect(snapshot.slashCommands.map((command) => command.name)).toEqual(["compact"]);
     }),
   );
 
-  it.effect("reports an error when ACP model discovery is unavailable", () =>
+  it.effect("keeps /compact when ACP model discovery is unavailable", () =>
     Effect.gen(function* () {
       const snapshot = yield* Effect.scoped(
         Effect.gen(function* () {
@@ -105,6 +133,7 @@ it.layer(NodeServices.layer)("checkKiroProviderStatus", (it) => {
       expect(snapshot.installed).toBe(true);
       expect(snapshot.models.map((model) => model.slug)).toEqual(["auto"]);
       expect(snapshot.message).toContain("ACP startup failed");
+      expect(snapshot.slashCommands.map((command) => command.name)).toEqual(["compact"]);
     }),
   );
 });

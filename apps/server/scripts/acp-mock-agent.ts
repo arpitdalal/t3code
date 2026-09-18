@@ -39,6 +39,8 @@ const floodStderr = process.env.T3_ACP_FLOOD_STDERR === "1";
 const emitUsageUpdate = process.env.T3_ACP_EMIT_USAGE_UPDATE === "1";
 const emitKiroMetadata = process.env.T3_ACP_EMIT_KIRO_METADATA === "1";
 const emitPromptUsage = process.env.T3_ACP_EMIT_PROMPT_USAGE === "1";
+const postCompactUsageAfterMs = Number(process.env.T3_ACP_POST_COMPACT_USAGE_AFTER_MS ?? "0");
+const postCompactUsageUsed = Number(process.env.T3_ACP_POST_COMPACT_USAGE_USED ?? "0");
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
 const hangFirstPromptForever = process.env.T3_ACP_HANG_FIRST_PROMPT_FOREVER === "1";
 const emitLateUpdateAfterCancel = process.env.T3_ACP_EMIT_LATE_UPDATE_AFTER_CANCEL === "1";
@@ -91,6 +93,17 @@ function promptIdFromRequestMeta(
   }
   const promptId = meta.promptId ?? meta.requestId;
   return typeof promptId === "string" && promptId.length > 0 ? promptId : undefined;
+}
+
+function promptTextFromRequest(request: Pick<AcpSchema.PromptRequest, "prompt">): string {
+  if (!Array.isArray(request.prompt)) return "";
+  return request.prompt
+    .flatMap((part) =>
+      part && typeof part === "object" && part.type === "text" && typeof part.text === "string"
+        ? [part.text]
+        : [],
+    )
+    .join("");
 }
 
 function logExit(reason: string): void {
@@ -1356,6 +1369,30 @@ const program = Effect.gen(function* () {
           content: { type: "text", text: promptResponseText ?? "hello from mock" },
         },
       });
+
+      // Kiro /compact returns before context shrinks; schedule a later usage drop
+      // so adapters can wait on the real completion signal.
+      if (
+        promptTextFromRequest(request).trim() === "/compact" &&
+        Number.isFinite(postCompactUsageAfterMs) &&
+        postCompactUsageAfterMs > 0 &&
+        Number.isFinite(postCompactUsageUsed) &&
+        postCompactUsageUsed > 0
+      ) {
+        const deferredSessionId = requestedSessionId;
+        const deferredUsed = postCompactUsageUsed;
+        const deferredSize = Number(process.env.T3_ACP_USAGE_SIZE ?? "200000");
+        setTimeout(() => {
+          writeJsonRpcNotification("session/update", {
+            sessionId: deferredSessionId,
+            update: {
+              sessionUpdate: "usage_update",
+              used: deferredUsed,
+              size: deferredSize,
+            },
+          });
+        }, postCompactUsageAfterMs);
+      }
 
       if (emitPromptUsage) {
         return {

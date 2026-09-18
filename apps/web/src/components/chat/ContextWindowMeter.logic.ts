@@ -15,7 +15,10 @@ const CLAUDE_RESUME_COMPACTION_TOKENS = 100_000;
 export function providerSupportsManualCompaction(
   provider: ProviderInstanceEntry | null | undefined,
 ): boolean {
-  return provider?.snapshot.slashCommands.some((command) => command.name === "compact") ?? false;
+  return (
+    provider?.snapshot.slashCommands.some((command) => command.name.toLowerCase() === "compact") ??
+    false
+  );
 }
 
 export function hasAvailableCompactionProvider(input: {
