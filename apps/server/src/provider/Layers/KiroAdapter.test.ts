@@ -23,7 +23,7 @@ import {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
-import { makeKiroAdapter } from "./KiroAdapter.ts";
+import { makeKiroAdapter, kiroUsageIndicatesCompactionComplete } from "./KiroAdapter.ts";
 
 const decodeKiroSettings = Schema.decodeSync(KiroSettings);
 
@@ -52,6 +52,23 @@ const kiroAdapterTestLayer = ServerConfig.layerTest(process.cwd(), {
 
 const makeTestAdapter = (binaryPath: string, options?: Parameters<typeof makeKiroAdapter>[1]) =>
   makeKiroAdapter(decodeKiroSettings({ binaryPath }), options).pipe(Effect.orDie);
+
+describe("kiroUsageIndicatesCompactionComplete", () => {
+  it("requires a positive baseline and a lower usedTokens", () => {
+    expect(
+      kiroUsageIndicatesCompactionComplete({ beforeTokens: 100_000 }, { usedTokens: 20_000 }),
+    ).toBe(true);
+    expect(
+      kiroUsageIndicatesCompactionComplete({ beforeTokens: 100_000 }, { usedTokens: 100_000 }),
+    ).toBe(false);
+    expect(
+      kiroUsageIndicatesCompactionComplete({ beforeTokens: 100_000 }, { usedTokens: 120_000 }),
+    ).toBe(false);
+    expect(
+      kiroUsageIndicatesCompactionComplete({ beforeTokens: null }, { usedTokens: 20_000 }),
+    ).toBe(false);
+  });
+});
 
 it.layer(kiroAdapterTestLayer)("KiroAdapter context window usage", (it) => {
   it.effect("emits thread.token-usage.updated from ACP usage_update session updates", () =>

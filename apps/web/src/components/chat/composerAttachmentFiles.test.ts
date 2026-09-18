@@ -70,6 +70,17 @@ describe("composer attachment files", () => {
     ).toBe(false);
   });
 
+  it("preserves text paste when rich HTML copy adds a synthetic HTML file", () => {
+    const file = new File(["<p>hi</p>"], "clipboard.html", { type: "text/html" });
+
+    expect(
+      shouldHandleComposerAttachmentPaste({
+        files: [file],
+        plainText: "**bold** markdown from chat",
+      }),
+    ).toBe(false);
+  });
+
   it("claims unsupported image pastes so the composer can report them", () => {
     const images = [
       new File(["svg"], "diagram.svg", { type: "image/svg+xml" }),

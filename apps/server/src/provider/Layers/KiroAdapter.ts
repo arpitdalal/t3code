@@ -116,6 +116,13 @@ interface KiroSessionContext {
   lastPlanFingerprint: string | undefined;
   lastKnownTokenUsage?: ThreadTokenUsageSnapshot;
   lastKnownContextWindow?: number;
+  /**
+   * Manual `/compact` is acknowledged as a turn before Kiro finishes shrinking
+   * context. Remember the pre-compact usage and turn id until a later usage
+   * update reports a drop, then emit compacted. `beforeTokens: null` means no
+   * baseline was available — emit compacted when the turn completes instead.
+   */
+  pendingCompact?: { readonly turnId: TurnId; readonly beforeTokens: number | null };
   activeTurnId: TurnId | undefined;
   /** Turns already interrupted; late prompt RPCs must not resurrect them. */
   interruptedTurnIds: Set<TurnId>;
@@ -179,6 +186,24 @@ const resolveSessionCallbackTurnId = (
   const ctx = sessions.get(threadId);
   return ctx ? resolveCallbackTurnId(ctx) : undefined;
 };
+
+/**
+ * Kiro's `/compact` turn returns before context actually shrinks. A later usage
+ * update with fewer tokens is the real completion signal.
+ */
+export function kiroUsageIndicatesCompactionComplete(
+  pending: { readonly beforeTokens: number | null },
+  usage: Pick<ThreadTokenUsageSnapshot, "usedTokens">,
+): boolean {
+  if (pending.beforeTokens === null || pending.beforeTokens <= 0) return false;
+  const after = usage.usedTokens;
+  return (
+    typeof after === "number" &&
+    Number.isFinite(after) &&
+    after >= 0 &&
+    after < pending.beforeTokens
+  );
+}
 
 function parseKiroResume(raw: unknown): { sessionId: string } | undefined {
   if (!isRecord(raw)) return undefined;
@@ -277,6 +302,49 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
 
     const offerRuntimeEvent = (event: ProviderRuntimeEvent) =>
       PubSub.publish(runtimeEventPubSub, event).pipe(Effect.asVoid);
+
+    const maybeEmitPendingCompact = (
+      ctx: KiroSessionContext,
+      usage: ThreadTokenUsageSnapshot,
+    ): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        const pending = ctx.pendingCompact;
+        if (!pending || !kiroUsageIndicatesCompactionComplete(pending, usage)) return;
+        const afterTokens = usage.usedTokens;
+        if (afterTokens === undefined || pending.beforeTokens === null) return;
+        ctx.pendingCompact = undefined;
+        yield* offerRuntimeEvent({
+          type: "thread.state.changed",
+          ...(yield* makeEventStamp()),
+          provider: PROVIDER,
+          threadId: ctx.threadId,
+          turnId: pending.turnId,
+          payload: {
+            state: "compacted",
+            beforeTokens: pending.beforeTokens,
+            afterTokens,
+          },
+        });
+      });
+
+    const emitCompactedForTurn = (
+      ctx: KiroSessionContext,
+      turnId: TurnId,
+      tokenCounts?: { readonly beforeTokens: number; readonly afterTokens: number },
+    ): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        yield* offerRuntimeEvent({
+          type: "thread.state.changed",
+          ...(yield* makeEventStamp()),
+          provider: PROVIDER,
+          threadId: ctx.threadId,
+          turnId,
+          payload: {
+            state: "compacted",
+            ...(tokenCounts ?? {}),
+          },
+        });
+      });
 
     const getThreadSemaphore = (threadId: string) =>
       SynchronizedRef.modifyEffect(threadLocksRef, (current) => {
@@ -516,6 +584,7 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
       Effect.gen(function* () {
         if (ctx.stopped) return;
         ctx.stopped = true;
+        ctx.pendingCompact = undefined;
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
         yield* settlePendingUserInputsAsCancelled(ctx.pendingUserInputs);
         if (ctx.notificationFiber) {
@@ -705,6 +774,7 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
                       rawPayload: params,
                     }),
                   );
+                  yield* maybeEmitPendingCompact(ctx, usage);
                 }),
               );
 
@@ -822,6 +892,7 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
                         rawPayload: event.rawPayload,
                       }),
                     );
+                    yield* maybeEmitPendingCompact(ctx, usage);
                   }
                   return;
                 }
@@ -996,6 +1067,17 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
               });
 
               const text = input.input?.trim();
+              // /compact returns before Kiro finishes shrinking context; arm the
+              // pending marker so a later usage drop emits compacted.
+              if (text === "/compact") {
+                const beforeTokens =
+                  ctx.lastKnownTokenUsage?.usedTokens ?? ctx.lastKnownTokenUsage?.lastUsedTokens;
+                ctx.pendingCompact = {
+                  turnId,
+                  beforeTokens:
+                    typeof beforeTokens === "number" && beforeTokens > 0 ? beforeTokens : null,
+                };
+              }
               const imagePromptParts = yield* Effect.forEach(
                 input.attachments ?? [],
                 (attachment) =>
@@ -1243,7 +1325,20 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
                         rawPayload: result,
                       }),
                     );
+                    yield* maybeEmitPendingCompact(ctx, promptUsage);
                   }
+                }
+                if (result.stopReason === "cancelled") {
+                  if (ctx.pendingCompact?.turnId === prepared.turnId) {
+                    ctx.pendingCompact = undefined;
+                  }
+                } else if (
+                  ctx.pendingCompact?.turnId === prepared.turnId &&
+                  ctx.pendingCompact.beforeTokens === null
+                ) {
+                  // No pre-compact baseline to wait on — settle at turn end.
+                  ctx.pendingCompact = undefined;
+                  yield* emitCompactedForTurn(ctx, prepared.turnId);
                 }
                 yield* offerRuntimeEvent({
                   type: "turn.completed",
@@ -1332,6 +1427,7 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
                             rawPayload: promptResult,
                           }),
                         );
+                        yield* maybeEmitPendingCompact(ctx, promptUsage);
                       }
                     }
                     yield* settlePromptInFlight(
@@ -1534,7 +1630,7 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
     return {
       provider: PROVIDER,
       capabilities: { sessionModelSwitch: "in-session" },
-      compaction: { type: "slash-command", command: "/compact" },
+      compaction: { type: "slash-command", command: "/compact", awaitCompactedEvent: true },
       startSession,
       sendTurn,
       interruptTurn,
