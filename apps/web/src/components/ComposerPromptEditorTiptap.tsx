@@ -46,6 +46,7 @@ import {
   buildDocJson,
   buildTiptapContent,
   collapsedToFlat,
+  ComposerCodeExtension,
   ComposerTaskItemExtension,
   flatToCollapsed,
   flatToMarkdown,
@@ -742,7 +743,11 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           gapcursor: false,
           trailingNode: false,
           // Plain mode has no marks: typed markers stay literal characters.
-          ...(richText ? {} : { bold: false, italic: false, strike: false, code: false }),
+          // Rich mode replaces StarterKit's code mark (excludes all others) with
+          // ComposerCodeExtension so `**\`x\`**` pastes stay valid.
+          ...(richText
+            ? { code: false }
+            : { bold: false, italic: false, strike: false, code: false }),
         }),
         ComposerMentionExtension,
         ComposerSkillExtension,
@@ -751,6 +756,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
         ComposerMarkersExtension,
         ...(richText
           ? [
+              ComposerCodeExtension,
               TaskList,
               ComposerTaskItemExtension.extend({
                 addInputRules() {
@@ -940,7 +946,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           view.dispatch(tr);
           return true;
         },
-        handlePaste: (_view, event) => {
+        handlePaste: (view, event) => {
           const clipboardData = event.clipboardData;
           if (!clipboardData) return false;
           // Attachment pastes are claimed in capture by onComposerPaste. Do not
