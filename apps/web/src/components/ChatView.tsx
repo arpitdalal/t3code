@@ -492,7 +492,10 @@ import { RightPanelSheet } from "./RightPanelSheet";
 import { previewEnvironment } from "../state/preview";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { fileAttachmentCapabilityBlockReason } from "./chat/composerAttachmentFiles";
+import {
+  fileAttachmentCapabilityBlockReason,
+  shouldHandleComposerAttachmentPaste,
+} from "./chat/composerAttachmentFiles";
 import { assetEnvironment } from "../state/assets";
 import { readPreparedConnection } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -704,13 +707,25 @@ function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
 
 /**
  * Plain text pasted with nothing editable focused, such as after the resting
- * composer blurred. Files are left to the composer's own paste handler.
+ * composer blurred. Real image/file pastes stay for the composer's handler;
+ * synthetic clipboard files beside text/plain (RTF/HTML from rich copy) must
+ * not block focusing and inserting the markdown.
  */
 function pasteTextToFocusComposer(event: ClipboardEvent): string | null {
-  if (!event.clipboardData || event.clipboardData.files.length > 0) return null;
+  if (!event.clipboardData) return null;
   if (!shouldRedirectInputToComposer(event)) return null;
   const text = event.clipboardData.getData("text/plain");
-  return text.length > 0 ? text : null;
+  if (text.length === 0) return null;
+  if (
+    event.clipboardData.files.length > 0 &&
+    shouldHandleComposerAttachmentPaste({
+      files: Array.from(event.clipboardData.files),
+      plainText: text,
+    })
+  ) {
+    return null;
+  }
+  return text;
 }
 
 const draftFanoutStateAtom = Atom.family((_routeKey: string) =>
@@ -3234,10 +3249,18 @@ export default function ChatView(props: ChatViewProps) {
         const payload = activity.payload as { readonly requestId?: unknown } | null | undefined;
         return payload?.requestId === pendingCompactionMessage.id;
       }));
+  // Kiro (and similar) finish the /compact turn before background compaction
+  // lands the context-compaction activity. Keep Compacting… until that activity
+  // or a turn-start failure settles the request, not merely until the turn ends.
   const isCompacting =
-    (isSendBusy || phase === "connecting" || phase === "running") &&
-    compactRequestIsActive &&
-    !compactionSettled;
+    pendingCompactionMessage !== undefined &&
+    !compactionSettled &&
+    (compactRequestIsActive ||
+      isSendBusy ||
+      phase === "connecting" ||
+      phase === "running" ||
+      (activeLatestTurn !== undefined &&
+        activeLatestTurn.requestedAt === pendingCompactionMessage.createdAt));
   // The server records a running worktree setup on the thread for the whole
   // bootstrap window. That record, with no turn yet, is how a reload or another
   // client sees a worktree still being prepared, so it counts as working like

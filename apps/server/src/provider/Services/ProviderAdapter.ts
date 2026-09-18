@@ -31,6 +31,9 @@ export type ProviderSessionModelSwitchMode = "in-session" | "unsupported";
  * How ProviderService runs manual context compaction for an adapter.
  * Native adapters expose a start call and must emit a compacted thread state
  * when they finish. Slash-command adapters get the command sent as a turn.
+ * When `awaitCompactedEvent` is set, turn completion alone is not enough —
+ * the adapter must emit `thread.state.changed` compacted (e.g. after async
+ * usage drop) before ProviderService settles the compaction.
  */
 export type ProviderCompaction<TError> =
   | {
@@ -40,7 +43,11 @@ export type ProviderCompaction<TError> =
         modelSelection?: ProviderSendTurnInput["modelSelection"],
       ) => Effect.Effect<void, TError>;
     }
-  | { readonly type: "slash-command"; readonly command: `/${string}` };
+  | {
+      readonly type: "slash-command";
+      readonly command: `/${string}`;
+      readonly awaitCompactedEvent?: boolean;
+    };
 
 export interface ProviderAdapterCapabilities {
   /**
