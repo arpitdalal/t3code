@@ -235,6 +235,8 @@ const COMPACTION_COMPLETION_TIMEOUT = "10 minutes";
 interface PendingCompaction {
   readonly completion: Deferred.Deferred<string>;
   readonly native: boolean;
+  /** Slash-command compaction that finishes after the turn via compacted event. */
+  readonly awaitCompactedEvent: boolean;
   readonly providerInstanceId: ProviderInstanceId;
   readonly requestId: MessageId | undefined;
   readonly earlyEvents: ProviderRuntimeEvent[];
@@ -1006,13 +1008,29 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       if (matchesTurn && isCompactedEvent(event)) {
         pending.compactedEventObserved = true;
         yield* publishRuntimeEvent(withCompactionRequestId(event, pending));
+        // Async slash-command compaction settles here: the /compact turn may
+        // have completed earlier while the provider was still compacting.
+        if (pending.awaitCompactedEvent) {
+          yield* settleCompaction(event.threadId, pending, "completed");
+        }
         return;
       }
       yield* publishRuntimeEvent(event);
       const terminal = compactionTerminal(event);
       if (!matchesTurn || terminal === null) return;
+      if (pending.awaitCompactedEvent && terminal === "completed") {
+        // Turn ack only — keep waiting for the adapter's compacted event.
+        return;
+      }
       const settled = yield* settleCompaction(event.threadId, pending, terminal);
-      if (!settled || terminal !== "completed" || pending.compactedEventObserved) return;
+      if (
+        !settled ||
+        terminal !== "completed" ||
+        pending.compactedEventObserved ||
+        pending.awaitCompactedEvent
+      ) {
+        return;
+      }
       const compactedEvent = {
         ...event,
         eventId: EventId.make(`${event.eventId}:context-compaction`),
@@ -1816,6 +1834,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const pending: PendingCompaction = {
         completion,
         native: compaction.type === "native",
+        awaitCompactedEvent:
+          compaction.type === "slash-command" && compaction.awaitCompactedEvent === true,
         providerInstanceId: routed.instanceId,
         requestId,
         earlyEvents: [],

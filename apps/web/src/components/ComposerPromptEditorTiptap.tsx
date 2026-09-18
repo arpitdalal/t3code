@@ -940,9 +940,13 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           view.dispatch(tr);
           return true;
         },
-        handlePaste: (view, event) => {
+        handlePaste: (_view, event) => {
           const clipboardData = event.clipboardData;
-          if (!clipboardData || clipboardData.files.length > 0) return false;
+          if (!clipboardData) return false;
+          // Attachment pastes are claimed in capture by onComposerPaste. Do not
+          // bail on clipboardData.files: chat/markdown copies often include a
+          // synthetic RTF/HTML file beside text/plain, and skipping here lets
+          // ProseMirror paste broken HTML while plain text is ignored.
           const pastedText = clipboardData.getData("text/plain");
           if (!pastedText) return false;
           event.preventDefault();

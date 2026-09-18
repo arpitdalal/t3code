@@ -991,9 +991,11 @@ const routing = makeProviderServiceLayer();
 const customCompactionDriver = ProviderDriverKind.make("custom-compaction-provider");
 const nativeCompactionInstanceId = ProviderInstanceId.make("native-compaction");
 const slashCompactionInstanceId = ProviderInstanceId.make("slash-compaction");
+const asyncSlashCompactionInstanceId = ProviderInstanceId.make("async-slash-compaction");
 const unsupportedCompactionInstanceId = ProviderInstanceId.make("unsupported-compaction");
 const customNativeCompaction = makeFakeCodexAdapter(customCompactionDriver);
 const customSlashCompaction = makeFakeCodexAdapter(customCompactionDriver);
+const customAsyncSlashCompaction = makeFakeCodexAdapter(customCompactionDriver);
 const unsupportedCompaction = makeFakeCodexAdapter(customCompactionDriver);
 const declaredCompaction = makeProviderServiceLayer({
   registry: makeStaticInstanceRegistry([
@@ -1009,6 +1011,17 @@ const declaredCompaction = makeProviderServiceLayer({
       {
         ...customSlashCompaction.adapter,
         compaction: { type: "slash-command", command: "/reduce-context" },
+      },
+    ],
+    [
+      asyncSlashCompactionInstanceId,
+      {
+        ...customAsyncSlashCompaction.adapter,
+        compaction: {
+          type: "slash-command",
+          command: "/compact",
+          awaitCompactedEvent: true,
+        },
       },
     ],
     [unsupportedCompactionInstanceId, unsupportedCompaction.adapter],
@@ -1084,6 +1097,63 @@ declaredCompaction.layer("ProviderService declared compaction", (it) => {
         customSlashCompaction.sendTurn.mock.calls[0]?.[0].modelSelection,
         modelSelection,
       );
+      yield* provider.stopSession({ threadId });
+    }),
+  );
+
+  it.effect("waits for compacted event when slash compaction is async", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("custom-async-slash-compaction");
+      const requestId = MessageId.make("custom-async-slash-request");
+      yield* provider.startSession(threadId, {
+        providerInstanceId: asyncSlashCompactionInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const compactedEvents = yield* Ref.make<Array<ProviderRuntimeEvent>>([]);
+      const observer = yield* provider.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            event.type === "thread.state.changed" &&
+            event.payload.state === "compacted",
+        ),
+        Stream.runForEach((event) => Ref.update(compactedEvents, (events) => [...events, event])),
+        Effect.forkChild,
+      );
+      const compactFiber = yield* provider
+        .compactThread(threadId, undefined, requestId)
+        .pipe(Effect.forkChild);
+      yield* advanceTestClock(50);
+      const turnId = asTurnId(`turn-${threadId}`);
+      customAsyncSlashCompaction.emit({
+        type: "turn.completed",
+        eventId: asEventId("custom-async-slash-turn-completed"),
+        provider: customCompactionDriver,
+        createdAt: "2026-01-01T00:00:01.000Z",
+        threadId,
+        turnId,
+        payload: { state: "completed" },
+      });
+      yield* Effect.yieldNow;
+      // Turn ack alone must not finish async slash compaction.
+      assert.equal(compactFiber.pollUnsafe(), undefined);
+      assert.equal((yield* Ref.get(compactedEvents)).length, 0);
+      customAsyncSlashCompaction.emit({
+        type: "thread.state.changed",
+        eventId: asEventId("custom-async-slash-compacted"),
+        provider: customCompactionDriver,
+        createdAt: "2026-01-01T00:00:02.000Z",
+        threadId,
+        turnId,
+        payload: { state: "compacted", beforeTokens: 100_000, afterTokens: 20_000 },
+      });
+      yield* Fiber.join(compactFiber);
+      const compacted = yield* Ref.get(compactedEvents);
+      assert.equal(compacted.length, 1);
+      assert.equal(compacted[0]?.requestId, String(requestId));
+      yield* Fiber.interrupt(observer);
       yield* provider.stopSession({ threadId });
     }),
   );
