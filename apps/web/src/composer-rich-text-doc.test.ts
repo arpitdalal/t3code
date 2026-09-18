@@ -1,4 +1,4 @@
-import { getSchemaByResolvedExtensions, Node, resolveExtensions } from "@tiptap/core";
+import { Editor, getSchemaByResolvedExtensions, Node, resolveExtensions } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { TaskList } from "@tiptap/extension-task-list";
 import { Node as ProseMirrorNode } from "@tiptap/pm/model";
@@ -6,6 +6,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildDocJson,
+  buildTiptapContent,
   collapsedToFlat,
   ComposerCodeExtension,
   ComposerTaskItemExtension,
@@ -359,5 +360,36 @@ describe("composer rich text document model", () => {
     expect(flatToMarkdown(map, 6)).toBe(10);
     expect(collapsedToFlat(map, 3)).toBe(2);
     expect(collapsedToFlat(map, 9)).toBe(6);
+  });
+
+  it("insertContent accepts bold wrapping inline code (composer paste path)", () => {
+    const value =
+      "**[Developer/PM] `useModifyBidUpgradeState.ts:45` — the `?? order.amount` fallback is now dead, so a modify-flow restore goes to the offer price instead of the placed bid.**";
+    const editor = new Editor({
+      extensions: [
+        StarterKit.configure({
+          blockquote: false,
+          bulletList: false,
+          codeBlock: false,
+          heading: false,
+          horizontalRule: false,
+          listItem: false,
+          orderedList: false,
+          dropcursor: false,
+          gapcursor: false,
+          trailingNode: false,
+          code: false,
+        }),
+        ComposerCodeExtension,
+      ],
+      content: { type: "doc", content: [{ type: "paragraph" }] },
+    });
+    const blocks = buildTiptapContent(value, (name) => ({ label: name, description: null }), {
+      styling: true,
+    });
+    const inline = blocks[0]?.content ?? [];
+    expect(editor.commands.insertContent(inline)).toBe(true);
+    expect(serializeEditorDoc(editor.state.doc).value).toBe(value);
+    editor.destroy();
   });
 });

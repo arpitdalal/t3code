@@ -1,3 +1,4 @@
+import { Mark, markInputRule, mergeAttributes } from "@tiptap/core";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { Code } from "@tiptap/extension-code";
 import { TaskItem } from "@tiptap/extension-task-item";
@@ -64,6 +65,40 @@ export const ComposerTaskItemExtension = TaskItem.extend({
     };
   },
 }).configure({ nested: true });
+
+/**
+ * TipTap's Code mark uses `excludes: "_"`, so bold/italic/strike cannot sit on
+ * the same text as code. Markdown pastes like `**\`path\`**` then throw inside
+ * `insertContent` and the composer drops the paste. Only exclude self.
+ */
+export const ComposerCodeExtension = Mark.create({
+  name: "code",
+  excludes: "code",
+  code: true,
+  exitable: true,
+  parseHTML() {
+    return [{ tag: "code" }];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ["code", mergeAttributes(HTMLAttributes), 0];
+  },
+  addKeyboardShortcuts() {
+    return { "Mod-e": () => this.editor.commands.toggleMark(this.name) };
+  },
+  addInputRules() {
+    return [
+      markInputRule({
+        find: (text) => {
+          const match = /`([^`]+)`(?!`)$/.exec(text);
+          if (!match) return null;
+          if (match.index > 0 && text[match.index - 1] === "`") return null;
+          return { index: match.index, text: match[0], replaceWith: match[1]! };
+        },
+        type: this.type,
+      }),
+    ];
+  },
+});
 
 function randomNodeKey(): string {
   return `tiptap-${Math.random().toString(36).slice(2)}`;
