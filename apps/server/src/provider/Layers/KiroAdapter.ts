@@ -119,10 +119,18 @@ interface KiroSessionContext {
   /**
    * Manual `/compact` is acknowledged as a turn before Kiro finishes shrinking
    * context. Remember the pre-compact usage and turn id until a later usage
-   * update reports a drop, then emit compacted. `beforeTokens: null` means no
-   * baseline was available — emit compacted when the turn completes instead.
+   * update reports a drop, then emit compacted + any deferred turn.completed.
+   * `beforeTokens: null` means no baseline yet — fill from turn-end usage when
+   * possible; if still missing, settle immediately (no signal to wait on).
    */
-  pendingCompact?: { readonly turnId: TurnId; readonly beforeTokens: number | null };
+  pendingCompact?: {
+    readonly turnId: TurnId;
+    beforeTokens: number | null;
+    deferredCompletion?: {
+      readonly stopReason: EffectAcpSchema.StopReason | null;
+      readonly state: "completed" | "cancelled";
+    };
+  };
   activeTurnId: TurnId | undefined;
   /** Turns already interrupted; late prompt RPCs must not resurrect them. */
   interruptedTurnIds: Set<TurnId>;
@@ -303,6 +311,38 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
     const offerRuntimeEvent = (event: ProviderRuntimeEvent) =>
       PubSub.publish(runtimeEventPubSub, event).pipe(Effect.asVoid);
 
+    const finishDeferredCompactTurn = (
+      ctx: KiroSessionContext,
+      turnId: TurnId,
+      deferred: {
+        readonly stopReason: EffectAcpSchema.StopReason | null;
+        readonly state: "completed" | "cancelled";
+      },
+    ): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        const completedAt = yield* nowIso;
+        if (ctx.activeTurnId === turnId || ctx.session.activeTurnId === turnId) {
+          const { activeTurnId: _completedTurnId, ...readySession } = ctx.session;
+          ctx.activeTurnId = undefined;
+          ctx.session = {
+            ...readySession,
+            status: "ready",
+            updatedAt: completedAt,
+          };
+        }
+        yield* offerRuntimeEvent({
+          type: "turn.completed",
+          ...(yield* makeEventStamp()),
+          provider: PROVIDER,
+          threadId: ctx.threadId,
+          turnId,
+          payload: {
+            state: deferred.state,
+            stopReason: deferred.stopReason,
+          },
+        });
+      });
+
     const maybeEmitPendingCompact = (
       ctx: KiroSessionContext,
       usage: ThreadTokenUsageSnapshot,
@@ -312,6 +352,7 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
         if (!pending || !kiroUsageIndicatesCompactionComplete(pending, usage)) return;
         const afterTokens = usage.usedTokens;
         if (afterTokens === undefined || pending.beforeTokens === null) return;
+        const deferred = pending.deferredCompletion;
         ctx.pendingCompact = undefined;
         yield* offerRuntimeEvent({
           type: "thread.state.changed",
@@ -325,6 +366,11 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
             afterTokens,
           },
         });
+        // Kiro acks /compact before context shrinks. Holding turn.completed
+        // until this usage drop keeps sidebar/notifications in "working".
+        if (deferred) {
+          yield* finishDeferredCompactTurn(ctx, pending.turnId, deferred);
+        }
       });
 
     const emitCompactedForTurn = (
@@ -345,6 +391,40 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
           },
         });
       });
+
+    const resolveCompactBaseline = (ctx: KiroSessionContext): number | null => {
+      const tokens = ctx.lastKnownTokenUsage?.usedTokens ?? ctx.lastKnownTokenUsage?.lastUsedTokens;
+      return typeof tokens === "number" && tokens > 0 ? tokens : null;
+    };
+
+    /**
+     * When /compact's prompt returns but usage has not dropped yet, keep the
+     * turn running and stash the completion to emit after compacted.
+     * Returns true when settlement was deferred.
+     */
+    const deferCompactTurnCompletion = (
+      ctx: KiroSessionContext,
+      turnId: TurnId,
+      completedStopReason: EffectAcpSchema.StopReason | null,
+    ): boolean => {
+      const pending = ctx.pendingCompact;
+      if (!pending || pending.turnId !== turnId) return false;
+      if (pending.beforeTokens === null) {
+        pending.beforeTokens = resolveCompactBaseline(ctx);
+      }
+      if (pending.beforeTokens === null) return false;
+      if (
+        ctx.lastKnownTokenUsage &&
+        kiroUsageIndicatesCompactionComplete(pending, ctx.lastKnownTokenUsage)
+      ) {
+        return false;
+      }
+      pending.deferredCompletion = {
+        stopReason: completedStopReason,
+        state: "completed",
+      };
+      return true;
+    };
 
     const getThreadSemaphore = (threadId: string) =>
       SynchronizedRef.modifyEffect(threadLocksRef, (current) => {
@@ -468,6 +548,17 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
         const shouldEmitFailedTurn = options?.errorMessage !== undefined && canEmitTurnCompletion;
         const shouldEmitCompletedTurn =
           options?.completedStopReason !== undefined && canEmitTurnCompletion;
+        if (options?.errorMessage !== undefined || options?.completedStopReason === "cancelled") {
+          if (liveCtx.pendingCompact?.turnId === settleTurnId) {
+            liveCtx.pendingCompact = undefined;
+          }
+        } else if (
+          shouldEmitCompletedTurn &&
+          options?.completedStopReason !== undefined &&
+          deferCompactTurnCompletion(liveCtx, settleTurnId, options.completedStopReason)
+        ) {
+          return;
+        }
         const { activeTurnId: _activeTurnId, ...readySession } = liveCtx.session;
         liveCtx.activeTurnId = undefined;
         liveCtx.session = {
@@ -1296,15 +1387,6 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
                     resumeCursor: ctx.session.resumeCursor,
                   };
                 }
-                const completedAt = yield* nowIso;
-                const { activeTurnId: _completedTurnId, ...readySession } = ctx.session;
-                ctx.activeTurnId = undefined;
-                ctx.session = {
-                  ...readySession,
-                  status: "ready",
-                  updatedAt: completedAt,
-                  ...(prepared.displayModel ? { model: prepared.displayModel } : {}),
-                };
                 const completedStopReason = completedStopReasonFromPromptResponse(result);
                 if (result.usage) {
                   const promptUsage = normalizeKiroPromptResponseUsage(result.usage, ctx);
@@ -1332,14 +1414,29 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
                   if (ctx.pendingCompact?.turnId === prepared.turnId) {
                     ctx.pendingCompact = undefined;
                   }
-                } else if (
-                  ctx.pendingCompact?.turnId === prepared.turnId &&
-                  ctx.pendingCompact.beforeTokens === null
-                ) {
-                  // No pre-compact baseline to wait on — settle at turn end.
+                } else if (deferCompactTurnCompletion(ctx, prepared.turnId, completedStopReason)) {
+                  // Keep session running until a later usage drop settles compact.
+                  ctx.interruptedTurnIds.delete(prepared.turnId);
+                  yield* Ref.set(promptSettled, true);
+                  return {
+                    threadId: input.threadId,
+                    turnId: prepared.turnId,
+                    resumeCursor: ctx.session.resumeCursor,
+                  };
+                } else if (ctx.pendingCompact?.turnId === prepared.turnId) {
+                  // No baseline left to wait on — settle compacted at turn end.
                   ctx.pendingCompact = undefined;
                   yield* emitCompactedForTurn(ctx, prepared.turnId);
                 }
+                const completedAt = yield* nowIso;
+                const { activeTurnId: _completedTurnId, ...readySession } = ctx.session;
+                ctx.activeTurnId = undefined;
+                ctx.session = {
+                  ...readySession,
+                  status: "ready",
+                  updatedAt: completedAt,
+                  ...(prepared.displayModel ? { model: prepared.displayModel } : {}),
+                };
                 yield* offerRuntimeEvent({
                   type: "turn.completed",
                   ...(yield* makeEventStamp()),

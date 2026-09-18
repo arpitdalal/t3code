@@ -98,6 +98,7 @@ export function buildInitialKiroProviderSnapshot(
       enabled: true,
       checkedAt,
       models,
+      slashCommands: withKiroCompactSlashCommand(),
       probe: {
         installed: true,
         version: null,
@@ -116,14 +117,24 @@ function kiroModelsFromSettings(
   return providerModelsFromSettings(builtInModels, customModels ?? [], EMPTY_CAPABILITIES);
 }
 
-/** Prefer ACP-advertised `/compact`; fall back to the shared compact command. */
-function withKiroCompactSlashCommand(
-  commands: ReadonlyArray<ServerProviderSlashCommand>,
+/** Always expose canonical `/compact`; keep ACP extras (description/input) when present. */
+export function withKiroCompactSlashCommand(
+  commands: ReadonlyArray<ServerProviderSlashCommand> = [],
 ): ReadonlyArray<ServerProviderSlashCommand> {
-  if (commands.some((command) => command.name.toLowerCase() === COMPACT_SLASH_COMMAND.name)) {
-    return commands;
-  }
-  return [COMPACT_SLASH_COMMAND, ...commands];
+  const advertised = commands.find(
+    (command) => command.name.toLowerCase() === COMPACT_SLASH_COMMAND.name,
+  );
+  const rest = commands.filter(
+    (command) => command.name.toLowerCase() !== COMPACT_SLASH_COMMAND.name,
+  );
+  return [
+    {
+      ...COMPACT_SLASH_COMMAND,
+      ...(advertised?.description ? { description: advertised.description } : {}),
+      ...(advertised?.input ? { input: advertised.input } : {}),
+    },
+    ...rest,
+  ];
 }
 
 function buildKiroDiscoveredModelsFromSessionModelState(
@@ -259,14 +270,16 @@ export const checkKiroProviderStatus = Effect.fn("checkKiroProviderStatus")(func
     yield* Effect.logWarning("Kiro CLI health check failed.", {
       errorTag: error._tag,
     });
+    const installed = !isCommandMissingCause(error);
     return buildServerProvider({
       presentation: KIRO_PRESENTATION,
       enabled: kiroSettings.enabled,
       checkedAt,
       models: fallbackModels,
       skills,
+      ...(installed ? { slashCommands: withKiroCompactSlashCommand() } : {}),
       probe: {
-        installed: !isCommandMissingCause(error),
+        installed,
         version: null,
         status: "error",
         auth: { status: "unknown" },
@@ -284,6 +297,7 @@ export const checkKiroProviderStatus = Effect.fn("checkKiroProviderStatus")(func
       checkedAt,
       models: fallbackModels,
       skills,
+      slashCommands: withKiroCompactSlashCommand(),
       probe: {
         installed: true,
         version: null,
@@ -308,6 +322,7 @@ export const checkKiroProviderStatus = Effect.fn("checkKiroProviderStatus")(func
       checkedAt,
       models: fallbackModels,
       skills,
+      slashCommands: withKiroCompactSlashCommand(),
       probe: {
         installed: true,
         version,
@@ -332,6 +347,7 @@ export const checkKiroProviderStatus = Effect.fn("checkKiroProviderStatus")(func
       checkedAt,
       models: fallbackModels,
       skills,
+      slashCommands: withKiroCompactSlashCommand(),
       probe: {
         installed: true,
         version,
@@ -351,6 +367,7 @@ export const checkKiroProviderStatus = Effect.fn("checkKiroProviderStatus")(func
       checkedAt,
       models: fallbackModels,
       skills,
+      slashCommands: withKiroCompactSlashCommand(),
       probe: {
         installed: true,
         version,

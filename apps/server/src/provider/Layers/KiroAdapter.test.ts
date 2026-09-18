@@ -230,4 +230,120 @@ it.layer(kiroAdapterTestLayer)("KiroAdapter context window usage", (it) => {
       });
     }),
   );
+
+  it.effect("defers turn.completed for /compact until usage drops", () =>
+    Effect.gen(function* () {
+      const binaryPath = yield* Effect.promise(() =>
+        makeMockKiroWrapper({
+          T3_ACP_EMIT_USAGE_UPDATE: "1",
+          T3_ACP_USAGE_USED: "100000",
+          T3_ACP_USAGE_SIZE: "200000",
+          T3_ACP_POST_COMPACT_USAGE_AFTER_MS: "200",
+          T3_ACP_POST_COMPACT_USAGE_USED: "25000",
+        }),
+      );
+      const adapter = yield* makeTestAdapter(binaryPath);
+      const threadId = ThreadId.make("thread-async-compact-1");
+
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      yield* Effect.forkScoped(
+        Stream.runForEach(
+          adapter.streamEvents.pipe(Stream.filter((event) => event.threadId === threadId)),
+          (event) =>
+            Effect.sync(() => {
+              runtimeEvents.push(event);
+            }),
+        ),
+      );
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("kiro"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: null,
+      });
+
+      const compactTurn = yield* Effect.raceFirst(
+        adapter.sendTurn({
+          threadId,
+          input: "/compact",
+          attachments: [],
+          modelSelection: null,
+        }),
+        Effect.promise(
+          () =>
+            new Promise<never>((_, reject) => {
+              setTimeout(() => reject(new Error("sendTurn(/compact) hung")), 8_000);
+            }),
+        ),
+      );
+
+      const eventsRightAfterAck = runtimeEvents.filter(
+        (event) => event.turnId === compactTurn.turnId,
+      );
+      expect(
+        eventsRightAfterAck.some(
+          (event) => event.type === "turn.completed" && event.payload.state === "completed",
+        ),
+      ).toBe(false);
+      expect(
+        eventsRightAfterAck.some(
+          (event) => event.type === "thread.state.changed" && event.payload.state === "compacted",
+        ),
+      ).toBe(false);
+
+      // Mock post-compact usage uses real setTimeout; wait on wall clock (not TestClock).
+      yield* Effect.promise(
+        () =>
+          new Promise<void>((resolve, reject) => {
+            const startedAt = Date.now();
+            const tick = () => {
+              if (
+                runtimeEvents.some(
+                  (event) =>
+                    event.turnId === compactTurn.turnId &&
+                    event.type === "turn.completed" &&
+                    event.payload.state === "completed",
+                )
+              ) {
+                resolve();
+                return;
+              }
+              if (Date.now() - startedAt > 3_000) {
+                reject(
+                  new Error(
+                    `Timed out waiting for deferred compact turn.completed. events=${JSON.stringify(
+                      runtimeEvents
+                        .filter((event) => event.turnId === compactTurn.turnId)
+                        .map((event) => event.type),
+                    )}`,
+                  ),
+                );
+                return;
+              }
+              setTimeout(tick, 50);
+            };
+            tick();
+          }),
+      );
+
+      const compactEvents = runtimeEvents.filter((event) => event.turnId === compactTurn.turnId);
+      const compactedIndex = compactEvents.findIndex(
+        (event) => event.type === "thread.state.changed" && event.payload.state === "compacted",
+      );
+      const completedIndex = compactEvents.findIndex(
+        (event) => event.type === "turn.completed" && event.payload.state === "completed",
+      );
+      expect(compactedIndex).toBeGreaterThanOrEqual(0);
+      expect(completedIndex).toBeGreaterThan(compactedIndex);
+      expect(compactEvents[compactedIndex]?.payload).toMatchObject({
+        state: "compacted",
+        beforeTokens: 100_000,
+        afterTokens: 25_000,
+      });
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
 });
