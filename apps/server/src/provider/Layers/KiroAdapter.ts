@@ -1302,7 +1302,7 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
               Effect.tapError((error) =>
                 Ref.set(
                   promptFailureMessageRef,
-                  mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error).message,
+                  mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error).detail,
                 ).pipe(Effect.andThen(prepared.acp.drainEvents)),
               ),
               Effect.mapError((error) =>
