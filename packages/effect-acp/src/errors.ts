@@ -187,6 +187,25 @@ export class AcpInputStreamEndedError extends Schema.TaggedError<AcpInputStreamE
   }
 }
 
+/** Prefer agent-provided string `data` over vague JSON-RPC titles like "Internal error". */
+export function formatAcpRequestErrorMessage(errorMessage: string, data: unknown): string {
+  if (typeof data !== "string") {
+    return errorMessage;
+  }
+  const detail = data.trim();
+  if (detail.length === 0) {
+    return errorMessage;
+  }
+  if (
+    errorMessage === "Internal error" ||
+    detail === errorMessage ||
+    detail.startsWith(errorMessage)
+  ) {
+    return detail;
+  }
+  return `${errorMessage}: ${detail}`;
+}
+
 export class AcpRequestError extends Schema.TaggedError<AcpRequestError>()("AcpRequestError", {
   code: AcpSchema.ErrorCode,
   errorMessage: Schema.String,
@@ -200,7 +219,7 @@ export class AcpRequestError extends Schema.TaggedError<AcpRequestError>()("AcpR
   cause: Schema.optionalKey(Schema.Defect()),
 }) {
   override get message() {
-    return this.errorMessage;
+    return formatAcpRequestErrorMessage(this.errorMessage, this.data);
   }
 
   static fromProtocolError(

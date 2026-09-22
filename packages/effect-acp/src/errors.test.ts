@@ -6,6 +6,7 @@ import * as RpcClientError from "effect/unstable/rpc/RpcClientError";
 import * as AcpSchema from "./_generated/schema.gen.ts";
 import { callRpc, runHandler } from "./_internal/shared.ts";
 import * as AcpError from "./errors.ts";
+import { AcpDefect } from "./rpc.ts";
 
 const decodeNestedNumberPayload = Schema.decodeUnknownEffect(
   Schema.Struct({ profile: Schema.Struct({ token: Schema.Number }) }),
@@ -73,6 +74,59 @@ describe("effect-acp errors", () => {
         operation: "receive-response",
       });
     });
+  });
+
+  it.effect("maps JSON-RPC error Dies to request errors with data in the message", () => {
+    const protocolError = {
+      code: -32603,
+      message: "Internal error",
+      data: "You have reached the limit for overages.",
+    };
+
+    return Effect.gen(function* () {
+      const error = yield* callRpc("session/prompt", Effect.die(protocolError)).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "AcpRequestError",
+        code: -32603,
+        errorMessage: "Internal error",
+        data: protocolError.data,
+        method: "session/prompt",
+      });
+      expect(error.message).toBe(protocolError.data);
+    });
+  });
+
+  it("keeps protocol error data that Schema.Defect would discard", () => {
+    const protocolError = {
+      code: -32603 as const,
+      message: "Internal error",
+      data: "You have reached the limit for overages.",
+    };
+
+    const viaDefaultDefect = Schema.decodeSync(Schema.Defect())(protocolError);
+    expect(viaDefaultDefect).toBeInstanceOf(Error);
+    expect((viaDefaultDefect as Error).message).toBe("Internal error");
+
+    expect(Schema.decodeSync(AcpDefect)(protocolError)).toEqual(protocolError);
+  });
+
+  it("prefers string protocol data over vague Internal error titles", () => {
+    const error = new AcpError.AcpRequestError({
+      code: -32603,
+      errorMessage: "Internal error",
+      data: "Encountered an error in the response stream: You have reached the limit for overages.",
+    });
+    expect(error.message).toBe(
+      "Encountered an error in the response stream: You have reached the limit for overages.",
+    );
+    expect(
+      new AcpError.AcpRequestError({
+        code: -32602,
+        errorMessage: "Invalid params",
+        data: "sessionId is required",
+      }).message,
+    ).toBe("Invalid params: sessionId is required");
   });
 
   it("does not expose legacy diagnostic detail as the transport message", () => {

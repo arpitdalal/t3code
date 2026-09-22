@@ -27,6 +27,13 @@ export const callRpc = <A>(
               }),
         ),
     }),
+    // ndJsonRpc maps standard JSON-RPC `error` objects to Exit Die. With
+    // AcpDefect those survive exit decode as AcpSchema.Error (not Error(message)).
+    Effect.catchDefect((defect) =>
+      isError(defect)
+        ? Effect.fail(AcpError.AcpRequestError.fromProtocolError(defect, { method }))
+        : Effect.die(defect),
+    ),
   );
 
 export const runHandler = Effect.fnUntraced(function* <A, B>(
