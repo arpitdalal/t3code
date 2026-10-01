@@ -123,14 +123,16 @@ interface KiroSessionContext {
    * `beforeTokens: null` means no baseline yet — fill from turn-end usage when
    * possible; if still missing, settle immediately (no signal to wait on).
    */
-  pendingCompact?: {
-    readonly turnId: TurnId;
-    beforeTokens: number | null;
-    deferredCompletion?: {
-      readonly stopReason: EffectAcpSchema.StopReason | null;
-      readonly state: "completed" | "cancelled";
-    };
-  };
+  pendingCompact?:
+    | {
+        readonly turnId: TurnId;
+        beforeTokens: number | null;
+        deferredCompletion?: {
+          readonly stopReason: EffectAcpSchema.StopReason | null;
+          readonly state: "completed" | "cancelled";
+        };
+      }
+    | undefined;
   activeTurnId: TurnId | undefined;
   /** Turns already interrupted; late prompt RPCs must not resurrect them. */
   interruptedTurnIds: Set<TurnId>;
@@ -318,7 +320,7 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
         readonly stopReason: EffectAcpSchema.StopReason | null;
         readonly state: "completed" | "cancelled";
       },
-    ): Effect.Effect<void> =>
+    ): Effect.Effect<void, ProviderAdapterRequestError> =>
       Effect.gen(function* () {
         const completedAt = yield* nowIso;
         if (ctx.activeTurnId === turnId || ctx.session.activeTurnId === turnId) {
@@ -346,7 +348,7 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
     const maybeEmitPendingCompact = (
       ctx: KiroSessionContext,
       usage: ThreadTokenUsageSnapshot,
-    ): Effect.Effect<void> =>
+    ): Effect.Effect<void, ProviderAdapterRequestError> =>
       Effect.gen(function* () {
         const pending = ctx.pendingCompact;
         if (!pending || !kiroUsageIndicatesCompactionComplete(pending, usage)) return;
@@ -377,7 +379,7 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
       ctx: KiroSessionContext,
       turnId: TurnId,
       tokenCounts?: { readonly beforeTokens: number; readonly afterTokens: number },
-    ): Effect.Effect<void> =>
+    ): Effect.Effect<void, ProviderAdapterRequestError> =>
       Effect.gen(function* () {
         yield* offerRuntimeEvent({
           type: "thread.state.changed",
@@ -1302,7 +1304,7 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
               Effect.tapError((error) =>
                 Ref.set(
                   promptFailureMessageRef,
-                  mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error).detail,
+                  mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error).message,
                 ).pipe(Effect.andThen(prepared.acp.drainEvents)),
               ),
               Effect.mapError((error) =>

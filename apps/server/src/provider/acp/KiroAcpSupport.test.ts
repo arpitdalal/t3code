@@ -278,8 +278,8 @@ describe("enrichKiroModelsWithEffortCapabilities", () => {
       });
 
       expect(setModels).toEqual(["claude-sonnet-5", "deepseek-3.2"]);
-      expect(models[0]?.capabilities.optionDescriptors ?? []).toEqual([]);
-      const sonnetEffort = models[1]?.capabilities.optionDescriptors?.[0];
+      expect(models[0]?.capabilities?.optionDescriptors ?? []).toEqual([]);
+      const sonnetEffort = models[1]?.capabilities?.optionDescriptors?.[0];
       expect(sonnetEffort).toMatchObject({
         id: "effort",
         label: "Effort",
@@ -289,7 +289,7 @@ describe("enrichKiroModelsWithEffortCapabilities", () => {
       expect(
         sonnetEffort?.type === "select" ? sonnetEffort.options.map((option) => option.id) : [],
       ).toEqual(["low", "high", "max"]);
-      expect(models[2]?.capabilities.optionDescriptors ?? []).toEqual([]);
+      expect(models[2]?.capabilities?.optionDescriptors ?? []).toEqual([]);
     }),
   );
 });

@@ -1431,16 +1431,20 @@ const program = Effect.gen(function* () {
         const deferredSessionId = requestedSessionId;
         const deferredUsed = postCompactUsageUsed;
         const deferredSize = Number(process.env.T3_ACP_USAGE_SIZE ?? "200000");
-        setTimeout(() => {
-          writeJsonRpcNotification("session/update", {
-            sessionId: deferredSessionId,
-            update: {
-              sessionUpdate: "usage_update",
-              used: deferredUsed,
-              size: deferredSize,
-            },
-          });
-        }, postCompactUsageAfterMs);
+        yield* Effect.forkDetach(
+          Effect.flatMap(Effect.sleep(`${postCompactUsageAfterMs} millis`), () =>
+            Effect.sync(() => {
+              writeJsonRpcNotification("session/update", {
+                sessionId: deferredSessionId,
+                update: {
+                  sessionUpdate: "usage_update",
+                  used: deferredUsed,
+                  size: deferredSize,
+                },
+              });
+            }),
+          ),
+        );
       }
 
       if (emitPromptUsage) {
