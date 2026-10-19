@@ -4,6 +4,7 @@
  * with `kiro-cli login`, with `kiro-cli` on PATH (or T3_KIRO_BIN):
  *   node scripts/record-kiro-acp-replay-fixture.ts --scenario simple
  */
+import { kiroMcpStatusForRecording } from "@t3tools/provider-kiro/testing";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { ProviderReplayEntry } from "@t3tools/contracts";
@@ -50,7 +51,6 @@ const DROPPED_INBOUND_METHODS = new Set([
   "_kiro/sessions/changed",
   "_kiro/tools/didChange",
   "_kiro/hooks/didChange",
-  "_kiro/mcp/status",
   "_kiro/memory/syncStatus",
 ]);
 const HOME_PLACEHOLDER = "/home/kiro-replay";
@@ -166,7 +166,10 @@ function wireToEntries(wire: ReadonlyArray<WireMessage>): {
     const { direction, message } = wireMessage;
     const type = direction === "outgoing" ? "expect_outbound" : "emit_inbound";
     if (typeof message.method === "string") {
-      if (direction === "incoming" && DROPPED_INBOUND_METHODS.has(message.method)) {
+      if (
+        direction === "incoming" &&
+        (DROPPED_INBOUND_METHODS.has(message.method) || message.method.startsWith("_kiro/secret/"))
+      ) {
         droppedFrames += 1;
         continue;
       }
@@ -184,7 +187,14 @@ function wireToEntries(wire: ReadonlyArray<WireMessage>): {
         frame: {
           kind,
           method: message.method,
-          ...(message.params === undefined ? {} : { params: message.params }),
+          ...(message.params === undefined
+            ? {}
+            : {
+                params:
+                  message.method === "_kiro/mcp/status"
+                    ? kiroMcpStatusForRecording(message.params)
+                    : message.params,
+              }),
         },
       });
       continue;
@@ -546,7 +556,7 @@ const recordScenario = Effect.fn("recordKiroScenario")(function* (fixtureName: s
       generatedBy: "live-kiro-recorder",
       kiroVersion: process.env.T3_KIRO_VERSION ?? "unknown",
       normalization:
-        "Session ids are fixed sess_ UUIDs and other UUIDs (message and request ids) are numbered in first-seen order, the workspace is <workspace>, HOME is /home/kiro-replay and the recording user is kiro-replay. T3-owned prompt text, MCP servers and initialize params other than clientCapabilities and _meta are <any>. Kiro's log directory, user-scoped commands and agents, and the _kiro/* broadcasts T3 ignores (governance, steering documents, powers, tools, hooks, MCP status, session roster, memory sync) are removed. Timestamps are kept as recorded.",
+        "Session ids are fixed sess_ UUIDs and other UUIDs (message and request ids) are numbered in first-seen order, the workspace is <workspace>, HOME is /home/kiro-replay and the recording user is kiro-replay. T3-owned prompt text, MCP servers and initialize params other than clientCapabilities and _meta are <any>. Kiro's log directory, user-scoped commands and agents, and the _kiro/* broadcasts T3 ignores (governance, steering documents, powers, tools, hooks, session roster, memory sync) are removed. Timestamps are kept as recorded.",
       droppedFrames,
     },
     entries: [

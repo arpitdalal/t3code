@@ -7,6 +7,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { HttpClient } from "effect/http";
+import { makeKiroMcp, makeKiroMcpAuth } from "./mcp.ts";
+import { makeKiroAcpRuntime } from "./acpSupport.ts";
 
 import type * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import {
@@ -43,6 +46,7 @@ const MAINTENANCE = makeManualOnlyProviderMaintenanceCapabilities({
 });
 
 export type KiroDriverEnv =
+  | HttpClient.HttpClient
   | KiroAdapterV2DriverEnv
   | ChildProcessSpawner.ChildProcessSpawner
   | SecureRandom.SecureRandom
@@ -78,12 +82,16 @@ export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
       driverKind: DRIVER_KIND,
       instanceId,
     });
-    const stampIdentity = withInstanceIdentity({
+    const stampInstanceIdentity = withInstanceIdentity({
       instanceId,
       driverKind: DRIVER_KIND,
       displayName,
       accentColor,
       continuationGroupKey: continuationIdentity.continuationKey,
+    });
+    const stampIdentity = (current: Parameters<typeof stampInstanceIdentity>[0]) => ({
+      ...stampInstanceIdentity(current),
+      setup: { canAuthenticate: true, canInstall: false },
     });
     const effectiveConfig = { ...config, enabled } satisfies KiroSettings;
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
@@ -112,10 +120,30 @@ export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
       ),
     );
 
+    const mcp = yield* makeKiroMcp({ instanceId, environment: processEnv });
+    const mcpAuth = yield* makeKiroMcpAuth({
+      mcp,
+      makeRuntime: (cwd) =>
+        makeKiroAcpRuntime({
+          settings: effectiveConfig,
+          environment: processEnv,
+          cwd,
+          clientInfo: { name: "t3-code", version: "0.0.0" },
+          clientCapabilities: { _meta: { kiro: { secretStorage: true, openExternalUrl: true } } },
+        }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(SecureRandom.SecureRandom, crypto),
+        ),
+    });
     // "Kiro default" selects the default the snapshot read from Kiro's model list.
-    const orchestrationAdapter = yield* makeKiroAdapterV2Driver(
-      snapshot.getSnapshot.pipe(Effect.map((current) => kiroDefaultModelId(current.models))),
-    )
+    const orchestrationAdapter = yield* makeKiroAdapterV2Driver({
+      defaultModel: snapshot.getSnapshot.pipe(
+        Effect.map((current) => kiroDefaultModelId(current.models)),
+      ),
+      mcp,
+      onMcpStatus: () => mcpAuth.refreshMethods ?? Effect.void,
+      ...(mcpAuth.withAccess ? { withMcpAccess: mcpAuth.withAccess } : {}),
+    })
       .create({ instanceId, displayName, accentColor, environment, enabled, config })
       .pipe(
         Effect.mapError(
@@ -146,6 +174,7 @@ export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
               Effect.provideService(Path.Path, path),
             ),
       orchestrationAdapter,
+      auth: mcpAuth,
       textGeneration: yield* makeKiroTextGeneration(effectiveConfig, processEnv),
     } satisfies ProviderInstance;
   }),

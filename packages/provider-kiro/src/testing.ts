@@ -11,3 +11,4 @@ export {
   kiroDefaultModelId,
 } from "./server/status.ts";
 export { makeKiroTextGeneration } from "./server/textGeneration.ts";
+export { kiroMcpStatusForRecording } from "./server/mcp.ts";

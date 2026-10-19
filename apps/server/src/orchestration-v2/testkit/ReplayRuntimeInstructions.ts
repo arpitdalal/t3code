@@ -19,7 +19,7 @@ export function materializeReplayTranscriptRuntimeInstructions(
               ? "fx"
               : undefined;
   if (harness === undefined) return transcript;
-  const instructions = buildRuntimeInstructions({ harness, model: runtime.model });
+  let model = runtime.model;
 
   return {
     ...transcript,
@@ -27,6 +27,21 @@ export function materializeReplayTranscriptRuntimeInstructions(
       if (entry.type !== "expect_outbound") return entry;
       const frame = entry.frame;
       if (typeof frame !== "object" || frame === null) return entry;
+      if (
+        runtime.driver === "kiro" &&
+        "method" in frame &&
+        frame.method === "session/set_config_option" &&
+        "params" in frame &&
+        typeof frame.params === "object" &&
+        frame.params !== null &&
+        "configId" in frame.params &&
+        frame.params.configId === "model" &&
+        "value" in frame.params &&
+        typeof frame.params.value === "string"
+      ) {
+        model = frame.params.value;
+      }
+      const instructions = buildRuntimeInstructions({ harness, model });
       if (
         runtime.driver === "cursor" &&
         "type" in frame &&
@@ -56,11 +71,19 @@ export function materializeReplayTranscriptRuntimeInstructions(
           lastPart.type === "text" &&
           "text" in lastPart &&
           typeof lastPart.text === "string" &&
-          // A recording that switched models mid-thread already carries the
-          // instructions for the model each prompt ran on.
           (lastPart.text === instructions || lastPart.text.startsWith("<runtime_info>"))
         ) {
-          return entry;
+          if (runtime.driver !== "kiro" || lastPart.text === instructions) return entry;
+          return {
+            ...entry,
+            frame: {
+              ...frame,
+              params: {
+                ...frame.params,
+                prompt: [...prompt.slice(0, -1), { ...lastPart, text: instructions }],
+              },
+            },
+          };
         }
         return {
           ...entry,

@@ -8,6 +8,9 @@ import {
 import { KiroSettings } from "../settings.ts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import type * as SecureRandom from "effect/crypto/SecureRandom";
+import type * as Digest from "effect/crypto/Digest";
+import type { ProviderAuthController } from "@t3tools/provider-core/server/auth";
+import { makeKiroMcp, type KiroMcp } from "./mcp.ts";
 import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -205,6 +208,9 @@ export interface KiroAdapterV2Options {
    * default). Absent, it is `auto`.
    */
   readonly defaultModel?: Effect.Effect<string>;
+  readonly mcp?: KiroMcp;
+  readonly withMcpAccess?: ProviderAuthController["withAccess"];
+  readonly onMcpStatus?: () => Effect.Effect<void>;
   /** Replaces the `kiro-cli` launch (replay tests). Kiro's session setup still applies. */
   readonly makeRuntime?: (
     input: AcpAdapterV2RuntimeInput,
@@ -535,7 +541,9 @@ function kiroPromptFailure(cause: unknown) {
   });
 }
 
-function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Flavor {
+function makeKiroAcpAdapterFlavor(
+  options: KiroAdapterV2Options & { readonly mcp: KiroMcp },
+): AcpAdapterV2Flavor {
   const makeRuntime =
     options.makeRuntime ??
     ((input: AcpAdapterV2RuntimeInput) => {
@@ -554,14 +562,35 @@ function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Fl
     // Kiro V3 loads the user's hooks only when the client opts in. `v2` makes
     // Kiro run them itself; `enabled` alone hands them to the client as
     // `_kiro/hooks/*` requests, which T3 does not answer.
-    clientCapabilitiesMeta: { kiro: { hooks: { enabled: true, v2: true } } },
-    makeRuntime,
+    clientCapabilitiesMeta: { kiro: { hooks: { enabled: true, v2: true }, secretStorage: true } },
+    makeRuntime: (input) => {
+      const creation = Effect.gen(function* () {
+        const runtime = yield* makeRuntime(input);
+        const attached = yield* options.mcp.attach(runtime, {
+          cwd: input.cwd,
+          ...(options.onMcpStatus ? { onStatus: options.onMcpStatus } : {}),
+        });
+        yield* Effect.addFinalizer(() => attached.detach);
+        return attached.runtime;
+      });
+      return (options.withMcpAccess ? options.withMcpAccess(creation) : creation).pipe(
+        Effect.catchTags({
+          ProviderSetupError: (cause) =>
+            new EffectAcpErrors.AcpTransportError({
+              detail: "Finish or cancel Kiro MCP sign-in before starting a thread.",
+              cause,
+            }),
+        }),
+      );
+    },
     promptFailure: kiroPromptFailure,
     sessionMetadata: (notification) => {
+      if (notification.update.sessionUpdate !== "session_info_update") return undefined;
       const meta = notification.update._meta;
-      const usage = typeof meta === "object" && meta !== null
-        ? Option.getOrUndefined(decodeKiroContextUsage(meta.kiro))
-        : undefined;
+      const usage =
+        typeof meta === "object" && meta !== null
+          ? Option.getOrUndefined(decodeKiroContextUsage(meta.kiro))
+          : undefined;
       const percentage = usage?.contextUsage?.usagePercentage ?? usage?.usagePercentage;
       return percentage === undefined ? undefined : { contextUsagePercentage: percentage };
     },
@@ -599,9 +628,15 @@ function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Fl
 export const makeKiroAdapterV2 = Effect.fn("makeKiroAdapterV2")(function* (
   options: KiroAdapterV2Options,
 ) {
+  const mcp =
+    options.mcp ??
+    (yield* makeKiroMcp({
+      instanceId: options.instanceId,
+      environment: options.environment,
+    }));
   return yield* makeAcpAdapterV2({
     instanceId: options.instanceId,
-    flavor: makeKiroAcpAdapterFlavor(options),
+    flavor: makeKiroAcpAdapterFlavor({ ...options, mcp }),
     selfInvocation: options.selfInvocation,
     ...(options.nativeLogging === undefined ? {} : { nativeLogging: options.nativeLogging }),
     ...(options.testHooks === undefined ? {} : { testHooks: options.testHooks }),
@@ -609,6 +644,7 @@ export const makeKiroAdapterV2 = Effect.fn("makeKiroAdapterV2")(function* (
 });
 
 export type KiroAdapterV2DriverEnv =
+  | Digest.Digest
   | ChildProcessSpawner.ChildProcessSpawner
   | SecureRandom.SecureRandom
   | FileSystem.FileSystem
@@ -620,7 +656,7 @@ export type KiroAdapterV2DriverEnv =
 
 /** `defaultModel` reads Kiro's id for "Kiro default" from the provider snapshot. */
 export const makeKiroAdapterV2Driver = (
-  defaultModel: Effect.Effect<string>,
+  options: Pick<KiroAdapterV2Options, "defaultModel" | "mcp" | "onMcpStatus" | "withMcpAccess">,
 ): ProviderAdapterDriver<KiroSettings, KiroAdapterV2DriverEnv> => ({
   driverKind: KIRO_PROVIDER,
   configSchema: KiroSettings,
@@ -636,7 +672,7 @@ export const makeKiroAdapterV2Driver = (
         settings: { ...input.config, enabled: input.enabled },
         environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
         selfInvocation,
-        defaultModel,
+        ...options,
         nativeLogging: (threadId) =>
           makeNativeLogger({
             nativeEventLogger: providerEventLoggers.native,

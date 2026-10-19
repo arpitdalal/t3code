@@ -460,6 +460,75 @@ const terminalStatus = (events: ReadonlyArray<ProviderAdapterV2Event>) => {
 };
 
 describe("KiroAdapterV2", () => {
+  it.effect("keeps a config notification received before the model response is applied", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-kiro-config-race-" });
+      const advertised = [
+        modeOption,
+        kiroModelOption("claude-opus-5.5"),
+        effortOption("medium", CLAUDE_EFFORT_LEVELS),
+      ];
+      const transcript = yield* decodeAcpReplayTranscript(
+        {
+          provider: KIRO_PROVIDER,
+          protocol: "acp.ndjson-jsonrpc",
+          version: "1",
+          scenario: "config-response-race",
+          entries: [
+            outbound("initialize"),
+            answer("initialize", KIRO_V3_INITIALIZE),
+            outbound("session/new", { cwd: "<workspace>", mcpServers: "<any>" }),
+            answer("session/new", sessionSetup([modeOption])),
+            setConfig("model", "claude-opus-5.5"),
+            configResult([modeOption]),
+            update({ sessionUpdate: "config_option_update", configOptions: advertised }),
+            ...closeSession,
+          ] as never,
+        },
+        KIRO_PROVIDER,
+      );
+      const runtime: AcpSessionRuntime.AcpSessionRuntime["Service"] = yield* makeAcpReplayRuntime({
+        transcript,
+        statusPath: path.join(cwd, "status.json"),
+        scriptPath: yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
+        ),
+        childProcessSpawner,
+        fileSystem,
+      })({
+        cwd,
+        runtimePolicy: ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          cwd,
+        }),
+        mcpServers: [],
+        clientInfo: { name: "kiro-config-race-test", version: "0.0.0" },
+        clientCapabilities: {},
+        protocolLogging: {},
+        onTermination: () => Effect.void,
+        requestLogger: (event) =>
+          event.method === "session/set_config_option" && event.status === "succeeded"
+            ? runtime.configOptionChanges.pipe(
+                Stream.filter((options) => options.some((option) => option.id === "effortLevel")),
+                Stream.runHead,
+                Effect.asVoid,
+              )
+            : Effect.void,
+      });
+      yield* runtime.start();
+      yield* runtime.setConfigOption("model", "claude-opus-5.5", { allowUnlistedValue: true });
+      assert.deepEqual(
+        (yield* runtime.getConfigOptions).map((option) => option.id),
+        ["mode", "model", "effortLevel"],
+      );
+      yield* runtime.closeSession();
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
   it.effect("opens a session on a deployment that advertises no Kiro extensions", () =>
     runKiroScript({
       scenario: "no-extensions",
@@ -485,10 +554,13 @@ describe("KiroAdapterV2", () => {
           yield* startTurn;
           const result = yield* collectTurn(events);
           assert.equal(terminalStatus(result), "completed");
-          assert.isTrue(result.some((event) =>
-            event.type === "provider_thread.updated" &&
-            event.providerThread.nativeMetadata?.contextUsagePercentage === 0.9,
-          ));
+          assert.isTrue(
+            result.some(
+              (event) =>
+                event.type === "provider_thread.updated" &&
+                event.providerThread.nativeMetadata?.contextUsagePercentage === 0.9,
+            ),
+          );
         }),
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );

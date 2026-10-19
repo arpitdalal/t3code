@@ -19,6 +19,10 @@ describe("provider auth state", () => {
         methods: [method, { ...method, id: "passkey", type: "passkey" }],
         interaction: { type: "passkey", id: "passkey" },
         credentialOwner: "keychain",
+        mcpServers: [
+          { id: "workato", name: "Workato", status: "Connected", live: true },
+          { id: "future", name: "Future", status: "future-state", live: true },
+        ],
       }),
     ).toEqual({
       instanceId: "cursor",
@@ -28,6 +32,7 @@ describe("provider auth state", () => {
       expiresAt: null,
       message: null,
       methods: [method],
+      mcpServers: [{ id: "workato", name: "Workato", status: "Connected", live: true }],
     });
   });
 });

@@ -8,6 +8,7 @@ import {
   AuthProvidersManageScope,
   isManagedDriverAllowed,
   type ProviderAuthResponse,
+  type ProviderAuthState,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
@@ -135,6 +136,7 @@ function ProviderAccount({
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState({ id: "", values: {} as Record<string, string> });
   const state = auth.data;
+  const isMcpAuth = state?.purpose === "mcp";
   const interaction = state?.interaction;
   const draftId = `${state?.flowId ?? ""}:${interaction?.id ?? ""}`;
   const values = draft.id === draftId ? draft.values : {};
@@ -210,9 +212,11 @@ function ProviderAccount({
     provider.setup?.canAuthenticate !== false &&
     provider.enabled &&
     provider.installed;
-  const signInDisabled = disabled || state === null;
+  const signInDisabled = disabled || state === null || (isMcpAuth && methods.length === 0);
   const canSignOut =
-    !active && signedIn && (provider.auth.canLogout ?? provider.setup?.canAuthenticate);
+    !active &&
+    (signedIn || isMcpAuth) &&
+    (provider.auth.canLogout ?? provider.setup?.canAuthenticate);
   const showCallback =
     Boolean(url) && (interaction?.type === "browser" ? interaction.acceptsCallback : !interaction);
   const usesCredentials =
@@ -223,17 +227,19 @@ function ProviderAccount({
       ? state.message
       : !provider.enabled
         ? "Turned off"
-        : signedIn
-          ? "Signed in"
-          : isDiscovering
-            ? "Discovering sign-in methods…"
-            : needsExternalSetup
-              ? "No in-app sign-in advertised. Follow the provider's docs to finish setup."
-              : !provider.installed
-                ? "Not installed"
-                : usesCredentials
-                  ? "Connect to load models"
-                  : "Not signed in";
+        : isMcpAuth
+          ? "MCP servers sign in separately from your Kiro account. Credentials are saved on this environment."
+          : signedIn
+            ? "Signed in"
+            : isDiscovering
+              ? "Discovering sign-in methods…"
+              : needsExternalSetup
+                ? "No in-app sign-in advertised. Follow the provider's docs to finish setup."
+                : !provider.installed
+                  ? "Not installed"
+                  : usesCredentials
+                    ? "Connect to load models"
+                    : "Not signed in";
   // A provider with several sign-in methods picks one from a menu on the same control.
   const methodActions: MenuAction[] = methods.map((method) => ({
     id: `method:${method.id}`,
@@ -244,12 +250,14 @@ function ProviderAccount({
   }
   function signOut() {
     Dialog.alert(
-      "Sign out?",
-      `Running threads sharing this sign-in on ${environment.label} will stop. Thread history is kept.`,
+      isMcpAuth ? "Forget MCP sign-ins?" : "Sign out?",
+      isMcpAuth
+        ? `Forget all Kiro MCP sign-ins on ${environment.label}? Running Kiro threads will stop. Your Kiro account stays signed in.`
+        : `Running threads sharing this sign-in on ${environment.label} will stop. Thread history is kept.`,
       [
         { text: "Cancel", style: "cancel" },
         {
-          text: "Sign out",
+          text: isMcpAuth ? "Forget MCP sign-ins" : "Sign out",
           style: "destructive",
           onPress: () => {
             void run(() => logout(target));
@@ -270,7 +278,7 @@ function ProviderAccount({
       ? [
           {
             id: "change",
-            title: "Change account",
+            title: isMcpAuth ? "Connect MCP server" : "Change account",
             image: "person.crop.circle",
             attributes: { disabled: signInDisabled },
             ...(methodActions.length > 1
@@ -288,7 +296,7 @@ function ProviderAccount({
       ? [
           {
             id: "signOut",
-            title: "Sign out",
+            title: isMcpAuth ? "Forget MCP sign-ins" : "Sign out",
             image: "rectangle.portrait.and.arrow.right",
             attributes: { destructive: true, disabled: disabled || state === null },
           },
@@ -319,7 +327,7 @@ function ProviderAccount({
         void run(() => cancel({ environmentId, input: { instanceId, flowId: state.flowId! } }));
       }}
     />
-  ) : signedIn && !active && accountActions.length > 0 ? (
+  ) : (signedIn || isMcpAuth) && !active && accountActions.length > 0 ? (
     <Menu
       accessible
       accessibilityRole="button"
@@ -362,6 +370,11 @@ function ProviderAccount({
         <ProviderAccountSummary key={email} name={name} status={status} email={email} />
         {trailing}
       </View>
+      {isMcpAuth && state.mcpServers ? (
+        <View className="px-4 pb-3">
+          <ProviderMcpConnections servers={state.mcpServers} />
+        </View>
+      ) : null}
       {interaction?.type === "deviceCode" ||
       interaction?.type === "terminal" ||
       interaction?.type === "credentials" ||
@@ -457,6 +470,35 @@ function ProviderAccount({
           }}
         />
       ) : null}
+    </View>
+  );
+}
+
+function ProviderMcpConnections({
+  servers,
+}: {
+  readonly servers: NonNullable<ProviderAuthState["mcpServers"]>;
+}) {
+  return (
+    <View className="gap-2">
+      <Text className="text-xs text-foreground-muted">
+        Start a Kiro thread to check connections. Last check shows a previous session's result.
+      </Text>
+      {servers.length === 0 ? (
+        <Text>No MCP servers discovered.</Text>
+      ) : (
+        servers.map((server) => (
+          <View key={server.id} className="gap-1">
+            <Text className="text-sm text-foreground">{server.name}</Text>
+            <Text accessibilityLiveRegion="polite" className="text-sm text-foreground-muted">
+              {!server.live && server.status !== "Not checked" && server.status !== "Disabled"
+                ? "Last check: "
+                : ""}
+              {server.status}
+            </Text>
+          </View>
+        ))
+      )}
     </View>
   );
 }
