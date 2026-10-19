@@ -1,12 +1,3 @@
-/**
- * KiroSkills — filesystem discovery of Kiro CLI skills for the `$` picker.
- *
- * Kiro loads skills from `~/.kiro/skills` (user scope) and `<cwd>/.kiro/skills`
- * (project scope), one directory (or symlink) per skill with a `SKILL.md`
- * carrying YAML frontmatter — the same layout Claude Code uses.
- *
- * @module provider/Drivers/KiroSkills
- */
 import * as NodeOS from "node:os";
 
 import type { ServerProviderSkill } from "@t3tools/contracts";

@@ -315,14 +315,7 @@ export interface AcpAdapterV2Flavor {
   readonly sessionConfigForPolicy?: (
     policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
   ) => ReadonlyArray<{ readonly id: string; readonly value: string }>;
-  /**
-   * Opts the session into the ACP client `fs` capability. Agents read and write
-   * files themselves under their own permission model unless a flavor sets
-   * this. Requests pass the runtime policy guard, then these handlers, which
-   * receive the cwd of the policy active when the request arrives (null when
-   * the session has no workspace). Antigravity sets it and confines requests
-   * to that workspace.
-   */
+  // Opts into client filesystem requests, guarded by the current runtime policy and workspace cwd.
   readonly clientFileSystem?: {
     readonly readTextFile: (
       request: EffectAcpSchema.ReadTextFileRequest,
@@ -398,13 +391,7 @@ export interface AcpAdapterV2Flavor {
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
   /** Interrupt the local prompt fiber before `session/cancel` (Grok wedged prompts). */
   readonly interruptPromptOnCancel?: boolean;
-  /**
-   * Hold `session/cancel` until the agent has started the prompt: an update
-   * after `session/prompt` went out matches `isStart`, or `bound` has passed
-   * since it went out. The cancel is skipped when the prompt settles first.
-   * Kiro 2.27.1 can drop a cancel sent just after the prompt and run the turn
-   * to completion.
-   */
+  // Kiro can drop early cancels; wait for a post-dispatch start marker or the bound, unless the prompt settles.
   readonly cancelAfterPromptStarts?: {
     readonly isStart: (update: EffectAcpSchema.SessionUpdate) => boolean;
     readonly bound: Duration.Input;
@@ -620,7 +607,9 @@ function negotiatedCapabilities(
   const session = agent.sessionCapabilities;
   const setup = started.sessionSetupResult;
   const canSwitchModel =
-    modelOptionArrivesLate || findModelConfigOption(setup.configOptions) !== undefined || setup.models != null;
+    modelOptionArrivesLate ||
+    findModelConfigOption(setup.configOptions) !== undefined ||
+    setup.models != null;
   const canLoad = agent.loadSession === true;
   const canFork = session?.fork != null;
   return {
@@ -5872,7 +5861,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           /* Provider events include streaming deltas; avoid a span for each update. */
           Effect.fnUntraced(
             function* (rawNotification: EffectAcpSchema.SessionNotification) {
-            yield* markPromptStarted(rawNotification);
+              yield* markPromptStarted(rawNotification);
               const embedded = embeddedTerminalIdsFromSessionUpdate(rawNotification);
               if (embedded !== undefined) {
                 rememberEmbeddedTerminals({
@@ -6089,8 +6078,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 yield* userInput.acknowledgeNativeResponse;
                 return response ?? ({ outcome: { outcome: "cancelled" } } as const);
               }
-              const dispositionFor = (policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy, knownKind?: EffectAcpSchema.ToolKind | null) =>
-                (flavor.permissionDisposition ?? acpPermissionDisposition)(policy,
+              const dispositionFor = (
+                policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+                knownKind?: EffectAcpSchema.ToolKind | null,
+              ) =>
+                (flavor.permissionDisposition ?? acpPermissionDisposition)(
+                  policy,
                   params.toolCall.kind == null && knownKind != null
                     ? { ...params, toolCall: { ...params.toolCall, kind: knownKind } }
                     : params,
@@ -7071,13 +7064,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
         });
 
-        /**
-         * `cancelAfterPromptStarts`: waits until the agent has started the
-         * prompt, or the flavor's bound has passed since `session/prompt` was
-         * sent (since Stop, for a turn that sent none). False when the prompt
-         * settled first, so there is nothing to cancel. The acknowledgement
-         * wait after it keeps its own timeout.
-         */
+        // Bound the hold from prompt dispatch, or Stop if none was sent; acknowledgement gets its own timeout.
         const promptStillRunsAfterHold = Effect.fnUntraced(function* (context: ActiveAcpTurn) {
           const hold = flavor.cancelAfterPromptStarts;
           if (hold === undefined) return true;

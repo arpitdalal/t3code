@@ -516,3 +516,49 @@ it.effect("profile import stops owned sessions and gates access until credential
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect("publishes MCP status across sign-in, invalidation, failed discovery, and logout", () =>
+  Effect.gen(function* () {
+    let live = true;
+    let fail = false;
+    const mcpServers = Effect.sync(() => [
+      { id: "workato", name: "Workato", status: "Connected" as const, live },
+    ]);
+    const controller = yield* ProviderAuthFlow.make({
+      instanceId,
+      purpose: "mcp",
+      credentialBinding: { owner: "t3", key: "mcp" },
+      methods: Effect.suspend(() =>
+        fail
+          ? Effect.fail(
+              new ProviderSetupError({
+                instanceId,
+                operation: "methods",
+                detail: "Cannot read config.",
+              }),
+            )
+          : Effect.succeed([method]),
+      ),
+      mcpServers,
+      authenticate: () => Effect.never,
+      logout: Effect.void,
+      refreshMethodsAfterAuth: true,
+    });
+    yield* controller.refreshMethods!;
+    const start = yield* controller.start("owner");
+    assert.deepEqual(start.mcpServers, yield* mcpServers);
+    const cancel = yield* controller.cancel("owner", start.flowId!);
+    assert.deepEqual(cancel.mcpServers, yield* mcpServers);
+    yield* controller.invalidate!;
+    const state = () =>
+      controller.subscribe("another-client").pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+    assert.deepEqual((yield* state()).mcpServers, yield* mcpServers);
+    live = false;
+    fail = true;
+    yield* controller.refreshMethods!;
+    assert.deepEqual((yield* state()).mcpServers, yield* mcpServers);
+    assert.equal((yield* state()).message, "Cannot read config.");
+    const logout = yield* controller.logout(Effect.void);
+    assert.deepEqual(logout.mcpServers, yield* mcpServers);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

@@ -17,10 +17,8 @@ export const makeKiroTextGeneration = Effect.fn("makeKiroTextGeneration")(functi
 ) {
   const crypto = yield* Crypto.Crypto;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const run: TextGenerationOperations.Runner = <S extends Schema.Top>(
-    input: TextGenerationOperations.Request<S>,
-  ) =>
-    Effect.gen(function* () {
+  const run: TextGenerationOperations.Runner = Effect.fn("KiroTextGeneration.run")(
+    function* <S extends Schema.Top>(input: TextGenerationOperations.Request<S>) {
       const runtime = yield* makeKiroAcpRuntime({
         settings,
         environment,
@@ -65,21 +63,24 @@ export const makeKiroTextGeneration = Effect.fn("makeKiroTextGeneration")(functi
         });
       }
       return yield* TextGenerationOperations.decodeJsonReply(input, "Kiro", text);
-    }).pipe(
-      Effect.timeout("3 minutes"),
-      Effect.mapError((cause) =>
-        cause._tag === "TextGenerationError"
-          ? cause
-          : new TextGenerationError({
-              operation: input.operation,
-              detail: "Kiro ACP text generation failed.",
-              cause,
-            }),
+    },
+    (effect, input) =>
+      effect.pipe(
+        Effect.timeout("3 minutes"),
+        Effect.mapError((cause) =>
+          cause._tag === "TextGenerationError"
+            ? cause
+            : new TextGenerationError({
+                operation: input.operation,
+                detail: "Kiro ACP text generation failed.",
+                cause,
+              }),
+        ),
+        Effect.scoped,
+        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       ),
-      Effect.scoped,
-      Effect.provideService(Crypto.Crypto, crypto),
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-    );
+  );
   return TextGenerationOperations.fromRunner(
     "KiroTextGeneration",
     TextGenerationOperations.withoutInvestigation("Kiro", run),

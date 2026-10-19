@@ -1858,9 +1858,14 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       | EffectAcpSchema.LoadSessionResponse
       | EffectAcpSchema.NewSessionResponse
       | EffectAcpSchema.ResumeSessionResponse,
+    previous: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
   ) {
     const configOptions = sessionConfigOptionsFromSetup(response);
-    yield* SubscriptionRef.set(configOptionsRef, configOptions);
+    // A notification received during the request supersedes its response snapshot.
+    const updated = yield* SubscriptionRef.modify(configOptionsRef, (current) =>
+      current === previous ? ([true, configOptions] as const) : ([false, current] as const),
+    );
+    if (!updated) return;
     yield* Queue.offer(eventQueue, {
       _tag: "ConfigOptionsUpdated",
       configOptions,
@@ -1903,9 +1908,15 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       sessionSetupResult.configOptions !== undefined &&
       sessionSetupResult.configOptions !== null
     ) {
-      yield* SubscriptionRef.set(configOptionsRef, sessionConfigOptionsFromSetup(sessionSetupResult));
+      yield* SubscriptionRef.set(
+        configOptionsRef,
+        sessionConfigOptionsFromSetup(sessionSetupResult),
+      );
     } else if (!syntheticReplayIdle) {
-      yield* SubscriptionRef.set(configOptionsRef, sessionConfigOptionsFromSetup(sessionSetupResult));
+      yield* SubscriptionRef.set(
+        configOptionsRef,
+        sessionConfigOptionsFromSetup(sessionSetupResult),
+      );
     }
     const nextState = {
       sessionId,
@@ -2033,7 +2044,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
               "session/set_config_option",
               requestPayload,
               acp.agent.setSessionConfigOption(requestPayload),
-            ).pipe(Effect.tap((response) => updateConfigOptions(response)));
+            ).pipe(Effect.tap((response) => updateConfigOptions(response, configOptions)));
           }),
         ),
       ),
@@ -2722,7 +2733,9 @@ const handleSessionUpdate =
   }: {
     readonly queue: Queue.Queue<AcpSessionRuntimeEvent>;
     readonly modeStateRef: Ref.Ref<AcpSessionModeState | undefined>;
-    readonly configOptionsRef: SubscriptionRef.SubscriptionRef<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
+    readonly configOptionsRef: SubscriptionRef.SubscriptionRef<
+      ReadonlyArray<EffectAcpSchema.SessionConfigOption>
+    >;
     readonly toolCallsRef: Ref.Ref<Map<string, AcpToolCallTrackedState>>;
     readonly shownToolCallIds: Set<string>;
     readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;

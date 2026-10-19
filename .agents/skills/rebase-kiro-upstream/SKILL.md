@@ -13,12 +13,12 @@ Keep `feat/kiro-acp` (Kiro ACP provider) one commit ahead of `upstream/main`.
 
 ## Remotes / branches
 
-| Name | Remote | Role |
-|------|--------|------|
-| `upstream` | `https://github.com/pingdotgg/t3code.git` | Canonical T3 Code |
-| `origin` | `https://github.com/arpitdalal/t3code.git` | This fork |
-| `feat/kiro-acp` | fork branch | Kiro work lives here |
-| `main` | local mirror of upstream | Prefer reset to `upstream/main`; do not pile Kiro onto it |
+| Name            | Remote                                     | Role                                                      |
+| --------------- | ------------------------------------------ | --------------------------------------------------------- |
+| `upstream`      | `https://github.com/pingdotgg/t3code.git`  | Canonical T3 Code                                         |
+| `origin`        | `https://github.com/arpitdalal/t3code.git` | This fork                                                 |
+| `feat/kiro-acp` | fork branch                                | Kiro work lives here                                      |
+| `main`          | local mirror of upstream                   | Prefer reset to `upstream/main`; do not pile Kiro onto it |
 
 ## Preconditions
 

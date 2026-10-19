@@ -5,6 +5,7 @@ import * as RpcClientError from "effect/rpc/RpcClientError";
 
 import { callRpc } from "./_internal/shared.ts";
 import * as AcpError from "./errors.ts";
+import * as AcpSchema from "./schema.ts";
 
 const decodeNestedNumberPayload = Schema.decodeUnknownEffect(
   Schema.Struct({ profile: Schema.Struct({ token: Schema.Number }) }),

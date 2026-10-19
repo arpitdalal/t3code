@@ -22,7 +22,7 @@ import {
 } from "./AcpAdapterV2.testkit.ts";
 import { KIRO_PROVIDER, makeKiroAdapterV2 } from "./KiroAdapterV2.ts";
 
-const KIRO_REPLAY_SETTINGS = Schema.decodeUnknownSync(KiroSettings)({ enabled: true });
+const KIRO_REPLAY_SETTINGS = Schema.decodeSync(KiroSettings)({ enabled: true });
 
 function layerKiroProviderAdapterRegistryReplay(
   transcript: AcpReplayTranscript,

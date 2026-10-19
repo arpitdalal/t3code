@@ -119,6 +119,26 @@ export const ProviderAuthState = Schema.Struct({
     ForwardCompatibleArray(ProviderAuthMethod).check(Schema.isMaxLength(32)),
   ),
   interaction: ForwardCompatibleOptional(Schema.NullOr(ProviderAuthInteraction)),
+  purpose: ForwardCompatibleOptional(Schema.Literal("mcp")),
+  mcpServers: Schema.optionalKey(
+    ForwardCompatibleArray(
+      Schema.Struct({
+        id: SetupOperationId,
+        name: TrimmedNonEmptyString,
+        status: Schema.Literals([
+          "Connected",
+          "Connecting",
+          "Authentication required",
+          "Connection failed",
+          "Not connected",
+          "Not checked",
+          "Disabled",
+        ]),
+        // Closed sessions retain their last check, never a claim of a live connection.
+        live: Schema.Boolean,
+      }),
+    ),
+  ),
   credentialOwner: ForwardCompatibleOptional(Schema.Literals(["provider", "t3"])),
 });
 export type ProviderAuthState = typeof ProviderAuthState.Type;

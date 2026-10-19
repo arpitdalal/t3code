@@ -1,17 +1,6 @@
-/**
- * Records a Kiro ACP replay transcript from a live
- * `kiro-cli acp --agent-engine=v3 --auth-method=cli` process.
- *
- * The fixture's own scenario (the same commands and steps the replay test
- * dispatches) runs through the real orchestrator and the real KiroAdapterV2;
- * only the ACP runtime's protocol logger is swapped for a tee. Outbound frames
- * are therefore exactly what T3 sends, and inbound frames exactly what Kiro
- * answered. Kiro must already be signed in (`kiro-cli login`, done once by a
- * person; this script never signs in). Run from apps/server with `kiro-cli` on
- * PATH (or T3_KIRO_BIN):
- *
- *   node scripts/record-kiro-acp-replay-fixture.ts --scenario simple
- */
+// Requires an existing kiro-cli login; records real orchestrator traffic through the protocol logger.
+// From apps/server: node scripts/record-kiro-acp-replay-fixture.ts --scenario simple
+import { kiroMcpStatusForRecording } from "../src/provider/acp/KiroMcp.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { KiroSettings, type ProviderReplayEntry } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -57,7 +46,6 @@ const DROPPED_INBOUND_METHODS = new Set([
   "_kiro/progressive_context/items_changed",
   "_kiro/sessions/changed",
   "_kiro/tools/didChange",
-  "_kiro/mcp/status",
 ]);
 const HOME_PLACEHOLDER = "/home/kiro-replay";
 
@@ -172,7 +160,10 @@ function wireToEntries(wire: ReadonlyArray<WireMessage>): {
     const { direction, message } = wireMessage;
     const type = direction === "outgoing" ? "expect_outbound" : "emit_inbound";
     if (typeof message.method === "string") {
-      if (direction === "incoming" && DROPPED_INBOUND_METHODS.has(message.method)) {
+      if (
+        direction === "incoming" &&
+        (DROPPED_INBOUND_METHODS.has(message.method) || message.method.startsWith("_kiro/secret/"))
+      ) {
         droppedFrames += 1;
         continue;
       }
@@ -190,7 +181,14 @@ function wireToEntries(wire: ReadonlyArray<WireMessage>): {
         frame: {
           kind,
           method: message.method,
-          ...(message.params === undefined ? {} : { params: message.params }),
+          ...(message.params === undefined
+            ? {}
+            : {
+                params:
+                  message.method === "_kiro/mcp/status"
+                    ? kiroMcpStatusForRecording(message.params)
+                    : message.params,
+              }),
         },
       });
       continue;
@@ -408,7 +406,7 @@ function normalizeEntries(input: {
   });
 }
 
-const KIRO_RECORDING_SETTINGS = Schema.decodeUnknownSync(KiroSettings)({
+const KIRO_RECORDING_SETTINGS = Schema.decodeSync(KiroSettings)({
   enabled: true,
   binaryPath: process.env.T3_KIRO_BIN ?? "kiro-cli",
 });
@@ -549,7 +547,7 @@ const recordScenario = Effect.fn("recordKiroScenario")(function* (fixtureName: s
       generatedBy: "live-kiro-recorder",
       kiroVersion: process.env.T3_KIRO_VERSION ?? "unknown",
       normalization:
-        "Session ids are fixed sess_ UUIDs and other UUIDs (message and request ids) are numbered in first-seen order, the workspace is <workspace>, HOME is /home/kiro-replay and the recording user is kiro-replay. T3-owned prompt text, MCP servers and initialize params other than clientCapabilities and _meta are <any>. Kiro's log directory, user-scoped commands and agents, and the _kiro/* broadcasts T3 ignores (governance, steering documents, powers, tools, MCP status, session roster) are removed. Timestamps are kept as recorded.",
+        "Session ids are fixed sess_ UUIDs and other UUIDs (message and request ids) are numbered in first-seen order, the workspace is <workspace>, HOME is /home/kiro-replay and the recording user is kiro-replay. T3-owned prompt text, MCP servers and initialize params other than clientCapabilities and _meta are <any>. Kiro's log directory, user-scoped commands and agents, and the _kiro/* broadcasts T3 ignores (governance, steering documents, powers, tools, session roster) are removed. Timestamps are kept as recorded.",
       droppedFrames,
     },
     entries: [

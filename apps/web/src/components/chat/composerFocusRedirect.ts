@@ -82,6 +82,12 @@ export function pasteTextToFocusComposer(event: ClipboardEvent): string | null {
   if (!shouldRedirectInputToComposer(event)) return null;
   const text = event.clipboardData.getData("text/plain");
   if (text.length === 0) return null;
-  if (shouldHandleComposerAttachmentPaste({ files: Array.from(event.clipboardData.files), plainText: text })) return null;
+  if (
+    shouldHandleComposerAttachmentPaste({
+      files: Array.from(event.clipboardData.files),
+      plainText: text,
+    })
+  )
+    return null;
   return text;
 }

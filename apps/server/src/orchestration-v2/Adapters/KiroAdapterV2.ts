@@ -1,3 +1,5 @@
+import type { ProviderAuthController } from "@t3tools/provider-core/server/auth";
+import { makeKiroMcp, type KiroMcp } from "../../provider/acp/KiroMcp.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import {
@@ -90,6 +92,9 @@ export interface KiroAdapterV2Options {
    * default). Absent, it is `auto`.
    */
   readonly defaultModel?: Effect.Effect<string>;
+  readonly mcp?: KiroMcp;
+  readonly withMcpAccess?: ProviderAuthController["withAccess"];
+  readonly onMcpStatus?: () => Effect.Effect<void>;
   /** Replaces the `kiro-cli` launch (replay tests). Kiro's session setup still applies. */
   readonly makeRuntime?: (
     input: AcpAdapterV2RuntimeInput,
@@ -106,47 +111,32 @@ export interface KiroAdapterV2Options {
 const findKiroModelOption = (configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>) =>
   configOptions.find((option) => option.id === KIRO_MODEL_CONFIG_ID || option.category === "model");
 
-/**
- * Kiro V3 selects models through its `model` session config option, and
- * `session/set_model` does not exist. "default" selects Kiro's own default
- * model (`auto` unless the account's model list names another), so choosing
- * it after a named model switches back. No write goes out when the session
- * already runs the model, or for "default" on a new session.
- *
- * Kiro 2.27 leaves `model` out of the `session/new` result and advertises it
- * in a `config_option_update` a few milliseconds later, so a fresh session can
- * be configured before T3 has seen it; the write still goes to `model` then.
- * Kiro accepts any value at set time but fails the next `session/prompt` on
- * one its account cannot use (-32000 "The model '…' is not available",
- * `InvalidModelError`), so an unknown id never runs silently on another model.
- * A model Kiro does not list is still written, so a custom model from the
- * provider settings reaches Kiro, which decides.
- */
-const applyKiroModel = (
+// Kiro advertises `model` after session/new, so writes may precede its config option.
+// Custom ids still reach Kiro, which rejects unavailable models on the next prompt.
+const applyKiroModel = Effect.fn("KiroAdapterV2.applyModel")(function* (
   runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
   modelSelection: ModelSelection,
   defaultModel: Effect.Effect<string>,
   agentSwitched: boolean,
-) =>
-  Effect.gen(function* () {
-    const modelOption = findKiroModelOption(yield* runtime.getConfigOptions);
-    const current = modelOption?.type === "select" ? modelOption.currentValue : undefined;
-    const selected = modelSelection.model.trim();
-    const isDefault = selected.length === 0 || selected === KIRO_DEFAULT_MODEL;
-    // Before Kiro advertises `model` the session is new, so it already runs
-    // Kiro's default, unless an agent switch just moved it to the agent's model.
-    if (isDefault && modelOption?.type !== "select" && !agentSwitched) {
-      return current;
-    }
-    const requested = isDefault ? yield* defaultModel : selected;
-    if (requested === current) {
-      return current;
-    }
-    yield* runtime.setConfigOption(modelOption?.id ?? KIRO_MODEL_CONFIG_ID, requested, {
-      allowUnlistedValue: true,
-    });
-    return requested;
+) {
+  const modelOption = findKiroModelOption(yield* runtime.getConfigOptions);
+  const current = modelOption?.type === "select" ? modelOption.currentValue : undefined;
+  const selected = modelSelection.model.trim();
+  const isDefault = selected.length === 0 || selected === KIRO_DEFAULT_MODEL;
+  // Before Kiro advertises `model` the session is new, so it already runs
+  // Kiro's default, unless an agent switch just moved it to the agent's model.
+  if (isDefault && modelOption?.type !== "select" && !agentSwitched) {
+    return current;
+  }
+  const requested = isDefault ? yield* defaultModel : selected;
+  if (requested === current) {
+    return current;
+  }
+  yield* runtime.setConfigOption(modelOption?.id ?? KIRO_MODEL_CONFIG_ID, requested, {
+    allowUnlistedValue: true,
   });
+  return requested;
+});
 
 /**
  * Bound on waiting for Kiro to advertise the model T3 just wrote. Kiro 2.27.0
@@ -154,90 +144,67 @@ const applyKiroModel = (
  */
 const KIRO_MODEL_ADVERT_BOUND = "2 seconds";
 
-/**
- * Sets the thread's reasoning effort (the snapshot's `reasoningEffort`
- * select) on Kiro's `effortLevel` option. Kiro advertises that option only
- * while a model with effort runs, starting at that model's default, and
- * ignores a write sent before it does. The `model` write's result can carry
- * it (kiro-cli 2.28 per kirodotdev/KiroCrew#17551), but on 2.27.0 a write
- * sent right after `session/new` usually gets a result without `model` or
- * `effortLevel`, and both follow in a `config_option_update`. So the level is
- * written once Kiro advertises the written model; that advert is the one that
- * says whether the model has effort. A model change starts Kiro at the new
- * model's default, so the level is written again then; the runtime skips a
- * write that matches the current level. A level the model does not offer is
- * not sent: Kiro would accept it and leave the level unchanged. A rejected
- * write, or no advert within the bound, leaves Kiro's level in place rather
- * than failing the turn.
- */
-const applyKiroEffort = (
+// Kiro ignores effort writes until it advertises the selected model's effort option.
+// Missing adverts and rejected writes preserve Kiro's default rather than failing the turn.
+const applyKiroEffort = Effect.fn("KiroAdapterV2.applyEffort")(function* (
   runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
   modelSelection: ModelSelection,
   appliedModel: string | undefined,
-) =>
-  Effect.gen(function* () {
-    const requested = getModelSelectionStringOptionValue(modelSelection, "reasoningEffort");
-    if (requested === undefined) return;
-    const advertised = yield* runtime.configOptionChanges.pipe(
-      Stream.filter((configOptions) => {
-        const modelOption = findKiroModelOption(configOptions);
-        return (
-          appliedModel === undefined ||
-          (modelOption?.type === "select" && modelOption.currentValue === appliedModel)
-        );
-      }),
-      Stream.runHead,
-      Effect.timeoutOption(KIRO_MODEL_ADVERT_BOUND),
-      Effect.map(Option.flatten),
-    );
-    if (Option.isNone(advertised)) {
-      return yield* Effect.logWarning("Kiro did not advertise the model's reasoning effort", {
-        model: appliedModel,
-        value: requested,
-      });
-    }
-    const effortOption = advertised.value.find((option) => option.id === KIRO_EFFORT_CONFIG_ID);
-    if (effortOption?.type !== "select" || !selectValues(effortOption).includes(requested)) {
-      return;
-    }
-    yield* runtime.setConfigOption(KIRO_EFFORT_CONFIG_ID, requested).pipe(
-      Effect.catchTags({
-        AcpRequestError: (error) =>
-          Effect.logWarning("Kiro rejected the reasoning effort", {
-            value: requested,
-            detail: error.message,
-          }),
-      }),
-    );
-  });
+) {
+  const requested = getModelSelectionStringOptionValue(modelSelection, "reasoningEffort");
+  if (requested === undefined) return;
+  const advertised = yield* runtime.configOptionChanges.pipe(
+    Stream.filter((configOptions) => {
+      const modelOption = findKiroModelOption(configOptions);
+      return (
+        appliedModel === undefined ||
+        (modelOption?.type === "select" && modelOption.currentValue === appliedModel)
+      );
+    }),
+    Stream.runHead,
+    Effect.timeoutOption(KIRO_MODEL_ADVERT_BOUND),
+    Effect.map(Option.flatten),
+  );
+  if (Option.isNone(advertised)) {
+    return yield* Effect.logWarning("Kiro did not advertise the model's reasoning effort", {
+      model: appliedModel,
+      value: requested,
+    });
+  }
+  const effortOption = advertised.value.find((option) => option.id === KIRO_EFFORT_CONFIG_ID);
+  if (effortOption?.type !== "select" || !selectValues(effortOption).includes(requested)) {
+    return;
+  }
+  yield* runtime.setConfigOption(KIRO_EFFORT_CONFIG_ID, requested).pipe(
+    Effect.catchTags({
+      AcpRequestError: (error) =>
+        Effect.logWarning("Kiro rejected the reasoning effort", {
+          value: requested,
+          detail: error.message,
+        }),
+    }),
+  );
+});
 
-/**
- * Selects the thread's Kiro agent (the snapshot's `mode` select) and reports
- * whether a switch went out. Kiro runs an agent's own `model` setting when it
- * switches to it (kiro-cli 2.27.0), so the agent is written before the model
- * and the thread's model choice still applies. A thread with no agent choice
- * keeps the session's agent. An agent the session does not list (deleted
- * since the provider snapshot) is skipped: Kiro would accept the write and
- * stay on its current agent.
- */
-const applyKiroAgent = (
+// Switching agents resets the model, so apply the agent before the thread's model choice.
+// Skip unlisted agents because Kiro accepts their writes without switching.
+const applyKiroAgent = Effect.fn("KiroAdapterV2.applyAgent")(function* (
   runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
   modelSelection: ModelSelection,
-) =>
-  Effect.gen(function* () {
-    const requested = getModelSelectionStringOptionValue(modelSelection, KIRO_AGENT_CONFIG_ID);
-    if (requested === undefined) return false;
-    const agentOption = (yield* runtime.getConfigOptions).find(
-      (option) => option.id === KIRO_AGENT_CONFIG_ID,
-    );
-    if (agentOption?.type !== "select" || agentOption.currentValue === requested) return false;
-    if (!selectValues(agentOption).includes(requested)) {
-      yield* Effect.logWarning("Kiro does not list the thread's agent", { agent: requested });
-      return false;
-    }
-    yield* runtime.setConfigOption(KIRO_AGENT_CONFIG_ID, requested);
-    return true;
-  });
+) {
+  const requested = getModelSelectionStringOptionValue(modelSelection, KIRO_AGENT_CONFIG_ID);
+  if (requested === undefined) return false;
+  const agentOption = (yield* runtime.getConfigOptions).find(
+    (option) => option.id === KIRO_AGENT_CONFIG_ID,
+  );
+  if (agentOption?.type !== "select" || agentOption.currentValue === requested) return false;
+  if (!selectValues(agentOption).includes(requested)) {
+    yield* Effect.logWarning("Kiro does not list the thread's agent", { agent: requested });
+    return false;
+  }
+  yield* runtime.setConfigOption(KIRO_AGENT_CONFIG_ID, requested);
+  return true;
+});
 
 const applyKiroModelSelection =
   (defaultModel: Effect.Effect<string>): NonNullable<AcpAdapterV2Flavor["applyModelSelection"]> =>
@@ -259,21 +226,8 @@ function selectValues(
 
 const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
 
-/**
- * Evidence that Kiro has started the current prompt, after which Stop sends
- * `session/cancel`: its `session_info_update` with `_meta.kiro.kind: "turn_start"`,
- * or output only a running prompt produces (assistant text or thoughts, tool
- * calls, plans). The `user_message_id_assigned` echo and context usage do not
- * count: the echo arrives within milliseconds of `session/prompt`, and the
- * previous prompt's context usage can arrive after the next one went out.
- *
- * Kiro's ACP docs do not promise `turn_start`, so Stop also gives up waiting
- * after KIRO_CANCEL_HOLD_BOUND. Evidence: in the 2.27.0 recordings
- * (`turn_interrupt`, `message_steering`) a cancel sent right after the echo,
- * before `turn_start`, was honored. On 2.27.1 TinBane saw a cancel sent
- * 0-0.5 s after `session/prompt` dropped (the turn ran to completion) and one
- * at 1.5 s or later honored.
- */
+// Kiro 2.27.1 can drop early cancels; wait for prompt activity or the bounded fallback.
+// Message-id echoes precede cancel readiness, and context usage may belong to the previous prompt.
 function isKiroPromptActivity(update: EffectAcpSchema.SessionUpdate): boolean {
   switch (update.sessionUpdate) {
     case "agent_message_chunk":
@@ -313,7 +267,9 @@ function kiroPromptFailure(cause: unknown) {
   });
 }
 
-function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Flavor {
+function makeKiroAcpAdapterFlavor(
+  options: KiroAdapterV2Options & { readonly mcp: KiroMcp },
+): AcpAdapterV2Flavor {
   const makeRuntime =
     options.makeRuntime ??
     ((input: AcpAdapterV2RuntimeInput) => {
@@ -335,8 +291,8 @@ function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Fl
     },
     capabilities: KiroProviderCapabilitiesV2,
     supportsCompaction: true,
-    compact: (runtime) =>
-      Effect.gen(function* () {
+    compact: Effect.fn("KiroAdapterV2.compact")(
+      function* (runtime) {
         const started = yield* runtime.start();
         const meta = started.initializeResult.agentCapabilities?._meta?.kiro;
         const methods =
@@ -352,19 +308,44 @@ function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Fl
         yield* runtime.request("_kiro/session/compact", { sessionId: started.sessionId });
         yield* runtime.drainEvents;
         return { stopReason: "end_turn" as const };
-      }).pipe(
-        Effect.timeoutOrElse({
-          duration: "3 minutes",
-          orElse: () =>
-            Effect.fail(
-              new EffectAcpErrors.AcpRequestError({
-                code: -32603,
-                errorMessage: "Kiro context compaction timed out.",
-              }),
-            ),
+      },
+      Effect.timeoutOrElse({
+        duration: "3 minutes",
+        orElse: () =>
+          Effect.fail(
+            new EffectAcpErrors.AcpRequestError({
+              code: -32603,
+              errorMessage: "Kiro context compaction timed out.",
+            }),
+          ),
+      }),
+    ),
+    makeRuntime: (input) => {
+      const creation = Effect.gen(function* () {
+        const runtime = yield* makeRuntime({
+          ...input,
+          clientCapabilities: {
+            ...input.clientCapabilities,
+            _meta: { ...input.clientCapabilities?._meta, kiro: { secretStorage: true } },
+          },
+        });
+        const attached = yield* options.mcp.attach(runtime, {
+          cwd: input.cwd,
+          ...(options.onMcpStatus ? { onStatus: options.onMcpStatus } : {}),
+        });
+        yield* Effect.addFinalizer(() => attached.detach);
+        return attached.runtime;
+      });
+      return (options.withMcpAccess ? options.withMcpAccess(creation) : creation).pipe(
+        Effect.catchTags({
+          ProviderSetupError: (cause) =>
+            new EffectAcpErrors.AcpTransportError({
+              detail: "Finish or cancel Kiro MCP sign-in before starting a thread.",
+              cause,
+            }),
         }),
-      ),
-    makeRuntime,
+      );
+    },
     promptFailure: kiroPromptFailure,
     // See applyKiroModelSelection: `model` arrives after session/new.
     modelOptionArrivesLate: true,
@@ -374,11 +355,7 @@ function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Fl
     // The generic option loop runs after the model write, and an agent write
     // there would put the agent's own model back.
     ownedModelOptionIds: ["reasoningEffort", KIRO_AGENT_CONFIG_ID],
-    // Kiro's own review step: with Autopilot off (Supervised) Kiro asks the
-    // user to accept a turn's changes before it ends; on (Full access) it does
-    // not. Its per-tool prompts come either way and T3's runtime policy
-    // answers them. A runtime-mode change reopens the session, which applies
-    // the option again.
+    // Autopilot controls Kiro's final change review; tool prompts still pass through T3's policy.
     sessionConfigForPolicy: (policy) => [
       { id: KIRO_AUTOPILOT_CONFIG_ID, value: kiroAutopilotValue(policy) },
     ],
@@ -395,9 +372,15 @@ function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Fl
 export const makeKiroAdapterV2 = Effect.fn("makeKiroAdapterV2")(function* (
   options: KiroAdapterV2Options,
 ) {
+  const mcp =
+    options.mcp ??
+    (yield* makeKiroMcp({
+      instanceId: options.instanceId,
+      environment: options.environment,
+    }));
   return yield* makeAcpAdapterV2({
     instanceId: options.instanceId,
-    flavor: makeKiroAcpAdapterFlavor(options),
+    flavor: makeKiroAcpAdapterFlavor({ ...options, mcp }),
     selfInvocation: options.selfInvocation,
     ...(options.nativeLogging === undefined ? {} : { nativeLogging: options.nativeLogging }),
     ...(options.testHooks === undefined ? {} : { testHooks: options.testHooks }),
@@ -419,7 +402,10 @@ export type KiroAdapterV2DriverEnv =
  * snapshot; without one (the bare V2 adapter registry) it is `auto`.
  */
 export const makeKiroAdapterV2Driver = (
-  defaultModel?: Effect.Effect<string>,
+  options: Pick<
+    KiroAdapterV2Options,
+    "defaultModel" | "mcp" | "onMcpStatus" | "withMcpAccess"
+  > = {},
 ): ProviderAdapterDriver<KiroSettings, KiroAdapterV2DriverEnv> => ({
   driverKind: KIRO_PROVIDER,
   configSchema: KiroSettings,
@@ -435,7 +421,7 @@ export const makeKiroAdapterV2Driver = (
         settings: { ...input.config, enabled: input.enabled },
         environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
         selfInvocation,
-        ...(defaultModel === undefined ? {} : { defaultModel }),
+        ...options,
         nativeLogging: (threadId) =>
           makeNativeLogger({
             nativeEventLogger: providerEventLoggers.native,
@@ -458,5 +444,3 @@ export const makeKiroAdapterV2Driver = (
       ),
   ),
 });
-
-export const KiroAdapterV2Driver = makeKiroAdapterV2Driver();

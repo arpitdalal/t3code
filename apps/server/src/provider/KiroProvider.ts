@@ -107,22 +107,21 @@ export const buildInitialKiroProviderSnapshot = (
     }),
   );
 
-const runKiroCli = (
+const runKiroCli = Effect.fn("KiroProvider.runCli")(function* (
   settings: KiroSettings,
   args: ReadonlyArray<string>,
   environment: NodeJS.ProcessEnv,
-) =>
-  Effect.gen(function* () {
-    const command = settings.binaryPath || "kiro-cli";
-    const spawnCommand = yield* resolveSpawnCommand(command, args, { env: environment });
-    return yield* spawnAndCollect(
-      command,
-      ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-        env: environment,
-        shell: spawnCommand.shell,
-      }),
-    );
-  });
+) {
+  const command = settings.binaryPath || "kiro-cli";
+  const spawnCommand = yield* resolveSpawnCommand(command, args, { env: environment });
+  return yield* spawnAndCollect(
+    command,
+    ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+      env: environment,
+      shell: spawnCommand.shell,
+    }),
+  );
+});
 
 const KiroWhoami = Schema.fromJsonString(
   Schema.Struct({
@@ -132,13 +131,7 @@ const KiroWhoami = Schema.fromJsonString(
 );
 const decodeKiroWhoami = Schema.decodeUnknownOption(KiroWhoami);
 
-/**
- * Reads `kiro-cli whoami --format json`. Kiro 2.27 prints
- * `{"accountType":"ApiKey","email":null}` and exits 0 when signed in (or when
- * `KIRO_API_KEY` is set), and `{"account":null}` with exit 1 when not. An IAM
- * Identity Center login follows the JSON line with a plain-text `Profile:`
- * block, so only the first line is decoded.
- */
+// IAM Identity Center appends a plain-text Profile block after whoami's JSON; decode only the first line.
 export function kiroAuthFromWhoami(
   output: { readonly code: number; readonly stdout: string } | undefined,
   environment: NodeJS.ProcessEnv,
@@ -165,15 +158,8 @@ const CLAUDE_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"];
 const CLAUDE_4_6_EFFORT_LEVELS = ["low", "medium", "high", "max"];
 const GPT_5_6_EFFORT_LEVELS = ["none", ...CLAUDE_EFFORT_LEVELS];
 
-/**
- * Reasoning levels per Kiro model id, and the one Kiro runs it at by default.
- * `--list-models` names no levels, and a session advertises them (the `model`
- * option's `_meta.kiro.effortLevels` and `defaultEffortLevel`) only once it
- * runs, so the picker uses this copy of Kiro 2.27.0's choices
- * (fixtures/kiro_model_switch), which match kiro.dev/docs/models/effort.
- * Models not listed take no effort. The adapter sends only a level the live
- * session offers, so a stale entry never reaches Kiro.
- */
+// --list-models omits effort levels; use Kiro 2.27's recorded choices until the session advertises them.
+// The adapter validates selections against the live session before sending them.
 const KIRO_MODEL_EFFORT: Readonly<
   Record<string, { readonly levels: ReadonlyArray<string>; readonly defaultLevel: string }>
 > = {
@@ -229,14 +215,7 @@ const KiroModelList = Schema.fromJsonString(
 );
 const decodeKiroModelList = Schema.decodeUnknownOption(KiroModelList);
 
-/**
- * Reads `kiro-cli chat --list-models --format json`, the models the signed-in
- * account may use (Kiro 2.27 lists 20, `auto` first and marked default). The
- * default entry becomes "Kiro default" and keeps Kiro's own id as its alias,
- * which the adapter selects for it. Sessions only advertise a model choice
- * after they start, so this is where the picker learns the list. Anything
- * unparsable keeps the built-in list.
- */
+// Sessions advertise models only after startup; the CLI list populates the picker beforehand.
 function kiroModelsFromList(
   output: { readonly code: number; readonly stdout: string } | undefined,
 ): ReadonlyArray<ServerProviderModel> | undefined {
@@ -296,15 +275,7 @@ const KiroConfigTemplate = Schema.Struct({
 });
 const decodeKiroConfigTemplate = Schema.decodeUnknownOption(KiroConfigTemplate);
 
-/**
- * The thread's agent picker, from Kiro's `_kiro/config/template` result: the
- * `mode` select a new session would get, without opening one. Kiro 2.27
- * offers its bundled agents (Default, Spec, Plan, ...) and the user's
- * `~/.kiro/agents`, in its own order, and marks the one a new session starts
- * on (Default, `vibe`; `kiro-cli agent set-default` changes only
- * `kiro-cli chat`). The template does not read a workspace, so a project's
- * `.kiro/agents` are not offered here.
- */
+// The template includes bundled and user agents without starting a session, but omits workspace agents.
 export function kiroAgentDescriptor(template: unknown): ProviderOptionDescriptor | undefined {
   const decoded = Option.getOrUndefined(decodeKiroConfigTemplate(template));
   const mode = decoded?.configOptions.find(
@@ -344,17 +315,19 @@ export function kiroAgentDescriptor(template: unknown): ProviderOptionDescriptor
  * nothing more: no `session/new`, so no MCP server starts and no session is
  * stored. The process runs in the server's working directory.
  */
-const probeKiroAgents = (settings: KiroSettings, environment: NodeJS.ProcessEnv) =>
-  Effect.gen(function* () {
-    const runtime = yield* makeKiroAcpRuntime({
-      settings,
-      environment,
-      cwd: yield* HostProcess.WorkingDirectory,
-      clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
-    });
-    yield* runtime.initialize();
-    return kiroAgentDescriptor(yield* runtime.request("_kiro/config/template", {}));
-  }).pipe(Effect.scoped);
+const probeKiroAgents = Effect.fn("KiroProvider.probeAgents")(function* (
+  settings: KiroSettings,
+  environment: NodeJS.ProcessEnv,
+) {
+  const runtime = yield* makeKiroAcpRuntime({
+    settings,
+    environment,
+    cwd: yield* HostProcess.WorkingDirectory,
+    clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
+  });
+  yield* runtime.initialize();
+  return kiroAgentDescriptor(yield* runtime.request("_kiro/config/template", {}));
+}, Effect.scoped);
 
 export const checkKiroProviderStatus = Effect.fn("checkKiroProviderStatus")(function* (
   settings: KiroSettings,

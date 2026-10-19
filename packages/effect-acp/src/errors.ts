@@ -262,7 +262,7 @@ export class AcpInputStreamEndedError extends Schema.TaggedError<AcpInputStreamE
 }
 
 /** Prefer agent-provided string `data` over vague JSON-RPC titles like "Internal error". */
-export function formatAcpRequestErrorMessage(errorMessage: string, data: unknown): string {
+function formatAcpRequestErrorMessage(errorMessage: string, data: unknown): string {
   if (typeof data !== "string") {
     return errorMessage;
   }

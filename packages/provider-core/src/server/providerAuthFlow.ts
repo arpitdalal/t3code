@@ -61,7 +61,10 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
   readonly instanceId: ProviderInstanceId;
   readonly credentialBinding: NonNullable<ProviderAuth.ProviderAuthController["credentialBinding"]>;
   readonly methods: Effect.Effect<ReadonlyArray<ProviderAuthMethod>, ProviderSetupError>;
+  readonly mcpServers?: Effect.Effect<NonNullable<ProviderAuthState["mcpServers"]>>;
   readonly defaultMethodId?: string;
+  readonly purpose?: ProviderAuthState["purpose"];
+  /** Stored account profiles can change the advertised methods after auth/logout. */
   readonly refreshMethodsAfterAuth?: boolean;
   /** Fail with ProviderSetupError containing safe text for the user, never native token data. */
   readonly authenticate: (
@@ -84,6 +87,7 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
     message: null,
     interaction: null,
     credentialOwner: options.credentialBinding.owner,
+    ...(options.purpose ? { purpose: options.purpose } : {}),
   };
   const snapshot = yield* SubscriptionRef.make({ owner: null as string | null, state: empty });
   let active: Flow | undefined;
@@ -135,6 +139,18 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
         state: { ...current.state, methods: current.state.methods ?? [], message: error.detail },
       })),
     ),
+    Effect.andThen(
+      options.mcpServers
+        ? options.mcpServers.pipe(
+            Effect.flatMap((mcpServers) =>
+              SubscriptionRef.update(snapshot, (current) => ({
+                ...current,
+                state: { ...current.state, mcpServers },
+              })),
+            ),
+          )
+        : Effect.void,
+    ),
   );
   yield* refreshMethods.pipe(Effect.forkIn(scope));
 
@@ -164,6 +180,7 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
       const state: ProviderAuthState = {
         ...empty,
         methods: snapshot.value.state.methods ?? [],
+        ...(snapshot.value.state.mcpServers ? { mcpServers: snapshot.value.state.mcpServers } : {}),
         phase: Exit.isSuccess(result) ? "succeeded" : "failed",
         message: Exit.isSuccess(result) ? null : failureMessage(result.cause),
       };
@@ -186,6 +203,9 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
           state: {
             ...empty,
             methods: snapshot.value.state.methods ?? [],
+            ...(snapshot.value.state.mcpServers
+              ? { mcpServers: snapshot.value.state.mcpServers }
+              : {}),
             message: "This provider's shared sign-in changed.",
           },
         });
@@ -259,6 +279,9 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
           const state: ProviderAuthState = {
             ...empty,
             methods: snapshot.value.state.methods ?? [],
+            ...(snapshot.value.state.mcpServers
+              ? { mcpServers: snapshot.value.state.mcpServers }
+              : {}),
             phase: "starting",
             flowId: id,
             expiresAt: DateTime.formatIso(DateTime.makeUnsafe(flow.expiresAt)),
@@ -473,6 +496,7 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
       const state: ProviderAuthState = {
         ...empty,
         methods: snapshot.value.state.methods ?? [],
+        ...(snapshot.value.state.mcpServers ? { mcpServers: snapshot.value.state.mcpServers } : {}),
         phase: Exit.isSuccess(result) ? "idle" : "failed",
         message: Exit.isSuccess(result)
           ? (result.value ?? "Signed out.")

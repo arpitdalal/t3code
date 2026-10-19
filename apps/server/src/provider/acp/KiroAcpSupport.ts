@@ -14,24 +14,11 @@ import {
 } from "@t3tools/provider-acp/server/clientPolicy";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
-/**
- * CLI V3 runs only when asked for (`--agent-engine=v3`); the default engine is
- * the v2 server this driver does not speak. `--auth-method=cli` keeps access
- * tokens inside the Kiro process, so T3 never handles them and Kiro never sends
- * `_kiro/auth/getAccessToken` (the shared ACP client answers that, like every
- * request without a handler, with a JSON-RPC method-not-found error).
- * V3 rejects the v2 launch flags (`--agent`, `--model`, `--trust-*`); mode and
- * model are chosen per session through `session/set_config_option`.
- */
+// Explicit V3 avoids the incompatible default engine; CLI auth keeps tokens inside Kiro.
+// V3 rejects v2 model/mode launch flags; configure those through session/set_config_option.
 const KIRO_ACP_ARGS = ["acp", "--agent-engine=v3", "--auth-method=cli"] as const;
 
-/**
- * Kiro's `autopilot` session option. Kiro 2.27 asks the client before a tool
- * call either way; with it "off" (Supervised) it also asks the user to review
- * a turn's file changes before it ends ("Review changes", a `turn_approval`
- * permission request). Kiro starts sessions on "on", so T3 sets it from the
- * thread's runtime mode.
- */
+// Kiro defaults Autopilot on; Supervised turns need it off to receive the final change-review request.
 export const KIRO_AUTOPILOT_CONFIG_ID = "autopilot";
 
 /** Kiro's model session option (`configId: "model"` in the V3 migration guide). */
@@ -135,20 +122,19 @@ export interface KiroAcpRuntimeInput extends Omit<
   readonly environment?: NodeJS.ProcessEnv;
 }
 
-export const makeKiroAcpRuntime = (
+export const makeKiroAcpRuntime = Effect.fn("makeKiroAcpRuntime")(function* (
   input: KiroAcpRuntimeInput,
-): Effect.Effect<
+): Effect.fn.Return<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
   EffectAcpErrors.AcpError,
   ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
-> =>
-  Effect.gen(function* () {
-    const { settings, environment, ...runtimeOptions } = input;
-    const context = yield* Layer.build(
-      AcpSessionRuntime.layer({
-        ...runtimeOptions,
-        spawn: buildKiroAcpSpawnInput(settings, input.cwd, environment),
-      }),
-    );
-    return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(Effect.provide(context));
-  });
+> {
+  const { settings, environment, ...runtimeOptions } = input;
+  const context = yield* Layer.build(
+    AcpSessionRuntime.layer({
+      ...runtimeOptions,
+      spawn: buildKiroAcpSpawnInput(settings, input.cwd, environment),
+    }),
+  );
+  return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(Effect.provide(context));
+});
