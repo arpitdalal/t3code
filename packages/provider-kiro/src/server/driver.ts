@@ -1,10 +1,15 @@
-import { ProviderDriverKind, TextGenerationError } from "@t3tools/contracts";
+import { ProviderDriverKind } from "@t3tools/contracts";
 import { KiroSettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { HttpClient } from "effect/http";
+import { makeKiroMcp, makeKiroMcpAuth } from "./mcp.ts";
+import { makeKiroAcpRuntime } from "./acpSupport.ts";
 
 import type * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import {
@@ -23,7 +28,8 @@ import {
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "@t3tools/provider-core/server/snapshotSettings";
-import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
+import { discoverKiroSkills } from "./skills.ts";
+import { makeKiroTextGeneration } from "./textGeneration.ts";
 import { type KiroAdapterV2DriverEnv, makeKiroAdapterV2Driver } from "./adapter.ts";
 import {
   buildInitialKiroProviderSnapshot,
@@ -40,29 +46,14 @@ const MAINTENANCE = makeManualOnlyProviderMaintenanceCapabilities({
   packageName: null,
 });
 
-const unsupportedTextGeneration: ProviderTextGeneration = (() => {
-  const unsupported = (operation: string) =>
-    Effect.fail(
-      new TextGenerationError({
-        operation,
-        detail: "Kiro does not provide application text generation.",
-      }),
-    );
-  return {
-    generateCommitMessage: () => unsupported("generateCommitMessage"),
-    generatePrContent: () => unsupported("generatePrContent"),
-    generateBranchName: () => unsupported("generateBranchName"),
-    generateThreadTitle: () => unsupported("generateThreadTitle"),
-    generateReviewGuide: () => unsupported("generateReviewGuide"),
-    generateTranscriptionPostProcessing: () => unsupported("generateTranscriptionPostProcessing"),
-  };
-})();
-
 export type KiroDriverEnv =
+  | HttpClient.HttpClient
   | KiroAdapterV2DriverEnv
   | ChildProcessSpawner.ChildProcessSpawner
   | SecureRandom.SecureRandom
-  | ProviderHost.ProviderHost;
+  | ProviderHost.ProviderHost
+  | FileSystem.FileSystem
+  | Path.Path;
 
 export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
   driverKind: DRIVER_KIND,
@@ -80,6 +71,8 @@ export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
     enabled,
     config,
   }) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const crypto = yield* SecureRandom.SecureRandom;
     const processEnv = yield* mergeProviderInstanceEnvironment(
@@ -90,12 +83,16 @@ export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
       driverKind: DRIVER_KIND,
       instanceId,
     });
-    const stampIdentity = withInstanceIdentity({
+    const stampInstanceIdentity = withInstanceIdentity({
       instanceId,
       driverKind: DRIVER_KIND,
       displayName,
       accentColor,
       continuationGroupKey: continuationIdentity.continuationKey,
+    });
+    const stampIdentity = (current: Parameters<typeof stampInstanceIdentity>[0]) => ({
+      ...stampInstanceIdentity(current),
+      setup: { canAuthenticate: true, canInstall: false },
     });
     const effectiveConfig = {
       ...config,
@@ -128,10 +125,30 @@ export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
       ),
     );
 
+    const mcp = yield* makeKiroMcp({ instanceId, environment: processEnv });
+    const mcpAuth = yield* makeKiroMcpAuth({
+      mcp,
+      makeRuntime: (cwd) =>
+        makeKiroAcpRuntime({
+          settings: effectiveConfig,
+          environment: processEnv,
+          cwd,
+          clientInfo: { name: "t3-code", version: "0.0.0" },
+          clientCapabilities: { _meta: { kiro: { secretStorage: true, openExternalUrl: true } } },
+        }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(SecureRandom.SecureRandom, crypto),
+        ),
+    });
     // "Kiro default" selects the default the snapshot read from Kiro's model list.
-    const orchestrationAdapter = yield* makeKiroAdapterV2Driver(
-      snapshot.getSnapshot.pipe(Effect.map((current) => kiroDefaultModelId(current.models))),
-    )
+    const orchestrationAdapter = yield* makeKiroAdapterV2Driver({
+      defaultModel: snapshot.getSnapshot.pipe(
+        Effect.map((current) => kiroDefaultModelId(current.models)),
+      ),
+      mcp,
+      onMcpStatus: () => mcpAuth.refreshMethods ?? Effect.void,
+      ...(mcpAuth.withAccess ? { withMcpAccess: mcpAuth.withAccess } : {}),
+    })
       .create({
         instanceId,
         displayName,
@@ -160,8 +177,17 @@ export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
       accentColor,
       enabled,
       snapshot,
+      snapshotForCwd: (cwd) =>
+        !enabled
+          ? snapshot.getSnapshot
+          : Effect.all([snapshot.getSnapshot, discoverKiroSkills(cwd, processEnv)]).pipe(
+              Effect.map(([current, skills]) => ({ ...current, skills })),
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+            ),
       orchestrationAdapter,
-      textGeneration: unsupportedTextGeneration,
+      auth: mcpAuth,
+      textGeneration: yield* makeKiroTextGeneration(effectiveConfig, processEnv),
     } satisfies ProviderInstance;
   }),
 };

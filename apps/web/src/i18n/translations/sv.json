@@ -12993,5 +12993,14 @@
   "99451a5d2d40440f": "Återkallad av {by}.",
   "3ee30a50b70fffab": "Återkallad av {by}: {reason}",
   "92e129bf413a1220": "återkallad",
-  "800966eb58181745": "Kontrollerar vilka språk modellen stöder…"
+  "800966eb58181745": "Kontrollerar vilka språk modellen stöder…",
+  "87db4a7acd4f36d9": "Autentisering krävs",
+  "ea80da4421c49b35": "MCP-servrar har en separat inloggning från ditt Kiro-konto. Inloggningsuppgifterna sparas i den här miljön.",
+  "0b8687223a622fa2": "Anslut MCP-server",
+  "2473ecd3ff27e2bc": "Glömma alla Kiro MCP-inloggningar i {environment}? Pågående Kiro-trådar stoppas. Du förblir inloggad på ditt Kiro-konto.",
+  "62313c072b1a742b": "Glöm MCP-inloggningar",
+  "ac806abd0452edef": "Starta en Kiro-tråd för att kontrollera anslutningarna. Den senaste kontrollen visar resultatet från en tidigare session.",
+  "47e5ffd9d90aa7d6": "Inga MCP-servrar hittades.",
+  "69ab3b218fef6a5f": "Anslutningar till MCP-servrar",
+  "69167bab39c399c3": "Senaste kontroll: {status}"
 }

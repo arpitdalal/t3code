@@ -62,6 +62,16 @@ export function ProviderAuthenticationSection({
   const terminalSending = useRef(false);
   const auth = query.data;
   const interaction = auth?.interaction;
+  const isMcpAuth = auth?.purpose === "mcp";
+  const mcpStatusLabels = {
+    Connected: gt("Connected"),
+    Connecting: gt("Connecting"),
+    "Authentication required": gt("Authentication required"),
+    "Connection failed": gt("Connection failed"),
+    "Not connected": gt("Not connected"),
+    "Not checked": gt("Not checked"),
+    Disabled: gt("Disabled"),
+  };
   const active =
     auth?.phase === "starting" || auth?.phase === "waiting" || auth?.phase === "verifying";
   const signedIn =
@@ -93,15 +103,19 @@ export function ProviderAuthenticationSection({
           : interaction?.type === "credentials"
             ? gt("Enter your credentials below.")
             : gt("Finish signing in in your browser.")
-    : signedIn
-      ? gt("Signed in.")
-      : isDiscovering
-        ? gt("Discovering sign-in methods…")
-        : needsExternalSetup
-          ? gt("No in-app sign-in advertised. Follow the provider's docs to finish setup.")
-          : usesCredentials
-            ? gt("Connect on {environment} to load models.", { environment: environmentLabel })
-            : gt("Sign in on {environment}.", { environment: environmentLabel });
+    : isMcpAuth
+      ? gt(
+          "MCP servers sign in separately from your Kiro account. Credentials are saved on this environment.",
+        )
+      : signedIn
+        ? gt("Signed in.")
+        : isDiscovering
+          ? gt("Discovering sign-in methods…")
+          : needsExternalSetup
+            ? gt("No in-app sign-in advertised. Follow the provider's docs to finish setup.")
+            : usesCredentials
+              ? gt("Connect on {environment} to load models.", { environment: environmentLabel })
+              : gt("Sign in on {environment}.", { environment: environmentLabel });
   const statusMessage = auth?.phase === "failed" ? auth.message : null;
   const disabled = readOnly || pending || query.error !== null || isDiscovering;
   const draftId = `${auth?.flowId ?? ""}:${interaction?.id ?? ""}`;
@@ -305,7 +319,13 @@ export function ProviderAuthenticationSection({
               <Button
                 size="sm"
                 variant="outline"
-                disabled={disabled || !provider.enabled || !provider.installed || !auth}
+                disabled={
+                  disabled ||
+                  !provider.enabled ||
+                  !provider.installed ||
+                  !auth ||
+                  (isMcpAuth && !auth.methods?.length)
+                }
                 onClick={() =>
                   void run(() =>
                     start({
@@ -320,18 +340,22 @@ export function ProviderAuthenticationSection({
                   )
                 }
               >
-                {signedIn
-                  ? gt("Change account")
-                  : auth?.phase === "failed" || auth?.phase === "cancelled"
-                    ? usesCredentials
-                      ? gt("Retry connection")
-                      : gt("Retry sign-in")
-                    : usesCredentials
-                      ? gt("Connect")
-                      : gt("Sign in")}
+                {isMcpAuth
+                  ? gt("Connect MCP server")
+                  : signedIn
+                    ? gt("Change account")
+                    : auth?.phase === "failed" || auth?.phase === "cancelled"
+                      ? usesCredentials
+                        ? gt("Retry connection")
+                        : gt("Retry sign-in")
+                      : usesCredentials
+                        ? gt("Connect")
+                        : gt("Sign in")}
               </Button>
             ) : null}
-            {!active && signedIn && (provider.auth.canLogout ?? provider.setup?.canAuthenticate) ? (
+            {!active &&
+            (signedIn || isMcpAuth) &&
+            (provider.auth.canLogout ?? provider.setup?.canAuthenticate) ? (
               <Button
                 size="sm"
                 variant="ghost"
@@ -339,26 +363,56 @@ export function ProviderAuthenticationSection({
                 onClick={() => {
                   void ensureLocalApi()
                     .dialogs.confirm(
-                      gt(
-                        "Sign out of {provider} on {environment}? This stops running threads that share this sign-in. Thread history is kept.",
-                        {
-                          provider: provider.displayName ?? provider.driver,
-                          environment: environmentLabel,
-                        },
-                      ),
+                      isMcpAuth
+                        ? gt(
+                            "Forget all Kiro MCP sign-ins on {environment}? Running Kiro threads will stop. Your Kiro account stays signed in.",
+                            { environment: environmentLabel },
+                          )
+                        : gt(
+                            "Sign out of {provider} on {environment}? This stops running threads that share this sign-in. Thread history is kept.",
+                            {
+                              provider: provider.displayName ?? provider.driver,
+                              environment: environmentLabel,
+                            },
+                          ),
                     )
                     .then((confirmed) => {
                       if (confirmed) void run(() => logout(target));
                     });
                 }}
               >
-                <T>Sign out</T>
+                {isMcpAuth ? gt("Forget MCP sign-ins") : <T>Sign out</T>}
               </Button>
             ) : null}
           </>
         </div>
       }
     >
+      {isMcpAuth && auth.mcpServers ? (
+        <div className="grid gap-2 py-2 text-sm">
+          <p className="text-xs text-muted-foreground">
+            {gt(
+              "Start a Kiro thread to check connections. Last check shows a previous session's result.",
+            )}
+          </p>
+          {auth.mcpServers.length === 0 ? (
+            <p>{gt("No MCP servers discovered.")}</p>
+          ) : (
+            <ul className="grid gap-1" aria-label={gt("MCP server connections")} aria-live="polite">
+              {auth.mcpServers.map((server) => (
+                <li key={server.id} className="flex flex-wrap justify-between gap-x-4 gap-y-1">
+                  <span className="min-w-0 [overflow-wrap:anywhere]">{server.name}</span>
+                  <span className="text-muted-foreground">
+                    {!server.live && server.status !== "Not checked" && server.status !== "Disabled"
+                      ? gt("Last check: {status}", { status: mcpStatusLabels[server.status] })
+                      : mcpStatusLabels[server.status]}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ) : null}
       {interaction?.type === "terminal" ||
       interaction?.type === "credentials" ||
       interaction?.type === "deviceCode" ||

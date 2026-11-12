@@ -5697,5 +5697,18 @@
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
   "201490988858b511": "retirada por {by}",
-  "46d614fa7b4bf1e5": "Ejecuciones de flujos de trabajo"
+  "46d614fa7b4bf1e5": "Ejecuciones de flujos de trabajo",
+  "ea80da4421c49b35": "Los servidores MCP requieren un inicio de sesión independiente de tu cuenta de Kiro. Las credenciales se guardan en este entorno.",
+  "294aa65ac758e700": "¿Olvidar los inicios de sesión de MCP?",
+  "2473ecd3ff27e2bc": "¿Olvidar todos los inicios de sesión de Kiro MCP en {environment}? Los hilos de Kiro activos se detendrán. Tu cuenta de Kiro seguirá conectada.",
+  "62313c072b1a742b": "Olvidar inicios de sesión de MCP",
+  "0b8687223a622fa2": "Conectar servidor MCP",
+  "c752acb0b7088295": "Conectado",
+  "c37d2b47b70c3f7c": "Conectando",
+  "87db4a7acd4f36d9": "Se requiere autenticación",
+  "e8c316fda5a3c260": "Sin comprobar",
+  "0b236f40b2a852aa": "Desactivado",
+  "ac806abd0452edef": "Inicia un hilo de Kiro para comprobar las conexiones. La última comprobación muestra el resultado de una sesión anterior.",
+  "47e5ffd9d90aa7d6": "No se encontraron servidores MCP.",
+  "69167bab39c399c3": "Última comprobación: {status}"
 }

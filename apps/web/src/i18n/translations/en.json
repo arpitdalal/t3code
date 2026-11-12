@@ -12995,5 +12995,14 @@
   "99451a5d2d40440f": "Withdrawn by {by}.",
   "3ee30a50b70fffab": "Withdrawn by {by}: {reason}",
   "92e129bf413a1220": "withdrawn",
-  "800966eb58181745": "Checking which languages the model supports…"
+  "800966eb58181745": "Checking which languages the model supports…",
+  "87db4a7acd4f36d9": "Authentication required",
+  "ea80da4421c49b35": "MCP servers sign in separately from your Kiro account. Credentials are saved on this environment.",
+  "0b8687223a622fa2": "Connect MCP server",
+  "2473ecd3ff27e2bc": "Forget all Kiro MCP sign-ins on {environment}? Running Kiro threads will stop. Your Kiro account stays signed in.",
+  "62313c072b1a742b": "Forget MCP sign-ins",
+  "ac806abd0452edef": "Start a Kiro thread to check connections. Last check shows a previous session's result.",
+  "47e5ffd9d90aa7d6": "No MCP servers discovered.",
+  "69ab3b218fef6a5f": "MCP server connections",
+  "69167bab39c399c3": "Last check: {status}"
 }

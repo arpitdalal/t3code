@@ -12986,5 +12986,14 @@
   "99451a5d2d40440f": "Zurückgezogen von {by}.",
   "3ee30a50b70fffab": "Zurückgezogen von {by}: {reason}",
   "92e129bf413a1220": "zurückgezogen",
-  "800966eb58181745": "Prüfe, welche Sprachen das Modell unterstützt…"
+  "800966eb58181745": "Prüfe, welche Sprachen das Modell unterstützt…",
+  "87db4a7acd4f36d9": "Anmeldung erforderlich",
+  "ea80da4421c49b35": "MCP-Server verwenden eine separate Anmeldung. Die Zugangsdaten werden in dieser Umgebung gespeichert.",
+  "0b8687223a622fa2": "MCP-Server verbinden",
+  "2473ecd3ff27e2bc": "Alle Kiro-MCP-Anmeldungen in {environment} löschen? Laufende Kiro-Threads werden gestoppt. Dein Kiro-Konto bleibt angemeldet.",
+  "62313c072b1a742b": "MCP-Anmeldungen löschen",
+  "ac806abd0452edef": "Starte einen Kiro-Thread, um die Verbindungen zu prüfen. Die letzte Prüfung zeigt das Ergebnis einer früheren Sitzung.",
+  "47e5ffd9d90aa7d6": "Keine MCP-Server gefunden.",
+  "69ab3b218fef6a5f": "MCP-Serververbindungen",
+  "69167bab39c399c3": "Letzte Prüfung: {status}"
 }

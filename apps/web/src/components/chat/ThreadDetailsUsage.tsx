@@ -119,7 +119,7 @@ function InstanceRows({
 export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowSnapshot }) {
   const maxTokens = usage.maxTokens != null && usage.maxTokens > 0 ? usage.maxTokens : null;
   const used =
-    maxTokens !== null && usage.usedPercentage !== null
+    usage.usedPercentage !== null
       ? Math.round(Math.max(0, Math.min(100, usage.usedPercentage)))
       : null;
   const threshold = usage.autoCompactThreshold ?? null;
@@ -145,9 +145,11 @@ export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowS
           tick={tick}
           muted
           value={
-            maxTokens !== null
-              ? `${usedTokens} / ${formatContextWindowTokens(maxTokens)}`
-              : usedTokens
+            usage.usedTokens === null && used !== null
+              ? `${used}%`
+              : maxTokens !== null
+                ? `${usedTokens} / ${formatContextWindowTokens(maxTokens)}`
+                : usedTokens
           }
           ariaValue={
             used !== null
@@ -161,7 +163,7 @@ export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowS
                   ? gt("Context: {used}% used", { used })
                   : gt("Context: {usedTokens} tokens used", { usedTokens })}
               </span>
-              {maxTokens !== null ? (
+              {maxTokens !== null && usage.usedTokens !== null ? (
                 <span className="text-muted-foreground">
                   {gt("{used} of {max} tokens", {
                     used: usage.usedTokens.toLocaleString(locale),

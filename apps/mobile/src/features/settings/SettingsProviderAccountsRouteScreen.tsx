@@ -10,6 +10,7 @@ import {
   AuthProvidersManageScope,
   isManagedDriverAllowed,
   type ProviderAuthResponse,
+  type ProviderAuthState,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
@@ -173,6 +174,7 @@ function ProviderAccount({
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState({ id: "", values: {} as Record<string, string> });
   const state = auth.data;
+  const isMcpAuth = state?.purpose === "mcp";
   const interaction = state?.interaction;
   const draftId = `${state?.flowId ?? ""}:${interaction?.id ?? ""}`;
   const values = draft.id === draftId ? draft.values : {};
@@ -252,9 +254,11 @@ function ProviderAccount({
     provider.setup?.canAuthenticate !== false &&
     provider.enabled &&
     provider.installed;
-  const signInDisabled = disabled || state === null;
+  const signInDisabled = disabled || state === null || (isMcpAuth && methods.length === 0);
   const canSignOut =
-    !active && signedIn && (provider.auth.canLogout ?? provider.setup?.canAuthenticate);
+    !active &&
+    (signedIn || isMcpAuth) &&
+    (provider.auth.canLogout ?? provider.setup?.canAuthenticate);
   const showCallback =
     Boolean(url) && (interaction?.type === "browser" ? interaction.acceptsCallback : !interaction);
   const usesCredentials =
@@ -265,17 +269,21 @@ function ProviderAccount({
       ? state.message
       : !provider.enabled
         ? gt("Turned off")
-        : signedIn
-          ? gt("Signed in")
-          : isDiscovering
-            ? gt("Discovering sign-in methods…")
-            : needsExternalSetup
-              ? gt("No in-app sign-in advertised. Follow the provider's docs to finish setup.")
-              : !provider.installed
-                ? gt("Not installed")
-                : usesCredentials
-                  ? gt("Connect to load models")
-                  : gt("Not signed in");
+        : isMcpAuth
+          ? gt(
+              "MCP servers sign in separately from your Kiro account. Credentials are saved on this environment.",
+            )
+          : signedIn
+            ? gt("Signed in")
+            : isDiscovering
+              ? gt("Discovering sign-in methods…")
+              : needsExternalSetup
+                ? gt("No in-app sign-in advertised. Follow the provider's docs to finish setup.")
+                : !provider.installed
+                  ? gt("Not installed")
+                  : usesCredentials
+                    ? gt("Connect to load models")
+                    : gt("Not signed in");
   // A provider with several sign-in methods picks one from a menu on the same control.
   const methodActions: MenuAction[] = methods.map((method) => ({
     id: `method:${method.id}`,
@@ -301,15 +309,20 @@ function ProviderAccount({
   }
   function signOut() {
     Dialog.alert(
-      gt("Sign out?"),
-      gt(
-        "Running threads sharing this sign-in on {environment} will stop. Thread history is kept.",
-        { environment: environment.label },
-      ),
+      isMcpAuth ? gt("Forget MCP sign-ins?") : gt("Sign out?"),
+      isMcpAuth
+        ? gt(
+            "Forget all Kiro MCP sign-ins on {environment}? Running Kiro threads will stop. Your Kiro account stays signed in.",
+            { environment: environment.label },
+          )
+        : gt(
+            "Running threads sharing this sign-in on {environment} will stop. Thread history is kept.",
+            { environment: environment.label },
+          ),
       [
         { text: gt("Cancel"), style: "cancel" },
         {
-          text: gt("Sign out"),
+          text: isMcpAuth ? gt("Forget MCP sign-ins") : gt("Sign out"),
           style: "destructive",
           onPress: () => {
             void run(() => logout(target));
@@ -336,7 +349,7 @@ function ProviderAccount({
       ? [
           {
             id: "change",
-            title: gt("Change account"),
+            title: isMcpAuth ? gt("Connect MCP server") : gt("Change account"),
             image: "person.crop.circle",
             attributes: { disabled: signInDisabled },
             ...(methodActions.length > 1
@@ -354,7 +367,7 @@ function ProviderAccount({
       ? [
           {
             id: "signOut",
-            title: gt("Sign out"),
+            title: isMcpAuth ? gt("Forget MCP sign-ins") : gt("Sign out"),
             image: "rectangle.portrait.and.arrow.right",
             attributes: { destructive: true, disabled: disabled || state === null },
           },
@@ -385,7 +398,7 @@ function ProviderAccount({
         void run(() => cancel({ environmentId, input: { instanceId, flowId: state.flowId! } }));
       }}
     />
-  ) : signedIn && !active && accountActions.length > 0 ? (
+  ) : (signedIn || isMcpAuth) && !active && accountActions.length > 0 ? (
     <Menu
       accessible
       accessibilityRole="button"
@@ -439,6 +452,11 @@ function ProviderAccount({
         <ProviderAccountSummary key={email} name={name} status={status} email={email} />
         {trailing}
       </View>
+      {isMcpAuth && state.mcpServers ? (
+        <View className="px-4 pb-3">
+          <ProviderMcpConnections servers={state.mcpServers} />
+        </View>
+      ) : null}
       {interaction?.type === "deviceCode" ||
       interaction?.type === "terminal" ||
       interaction?.type === "credentials" ||
@@ -537,6 +555,46 @@ function ProviderAccount({
           }}
         />
       ) : null}
+    </View>
+  );
+}
+
+function ProviderMcpConnections({
+  servers,
+}: {
+  readonly servers: NonNullable<ProviderAuthState["mcpServers"]>;
+}) {
+  const gt = useGT();
+  const statusLabels = {
+    Connected: gt("Connected"),
+    Connecting: gt("Connecting"),
+    "Authentication required": gt("Authentication required"),
+    "Connection failed": gt("Connection failed"),
+    "Not connected": gt("Not connected"),
+    "Not checked": gt("Not checked"),
+    Disabled: gt("Disabled"),
+  };
+  return (
+    <View className="gap-2">
+      <Text className="text-xs text-foreground-muted">
+        {gt(
+          "Start a Kiro thread to check connections. Last check shows a previous session's result.",
+        )}
+      </Text>
+      {servers.length === 0 ? (
+        <Text>{gt("No MCP servers discovered.")}</Text>
+      ) : (
+        servers.map((server) => (
+          <View key={server.id} className="gap-1">
+            <Text className="text-sm text-foreground">{server.name}</Text>
+            <Text accessibilityLiveRegion="polite" className="text-sm text-foreground-muted">
+              {!server.live && server.status !== "Not checked" && server.status !== "Disabled"
+                ? gt("Last check: {status}", { status: statusLabels[server.status] })
+                : statusLabels[server.status]}
+            </Text>
+          </View>
+        ))
+      )}
     </View>
   );
 }

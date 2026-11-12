@@ -12986,5 +12986,14 @@
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
   "92e129bf413a1220": "retirada",
-  "800966eb58181745": "Verificando quais idiomas o modelo suporta…"
+  "800966eb58181745": "Verificando quais idiomas o modelo suporta…",
+  "87db4a7acd4f36d9": "Autenticação necessária",
+  "ea80da4421c49b35": "Os servidores MCP usam um login separado da sua conta do Kiro. As credenciais são salvas neste ambiente.",
+  "0b8687223a622fa2": "Conectar servidor MCP",
+  "2473ecd3ff27e2bc": "Esquecer todos os logins do Kiro MCP em {environment}? As conversas do Kiro em andamento serão interrompidas. Sua conta do Kiro continuará conectada.",
+  "62313c072b1a742b": "Esquecer logins do MCP",
+  "ac806abd0452edef": "Inicie uma conversa do Kiro para verificar as conexões. A última verificação mostra o resultado de uma sessão anterior.",
+  "47e5ffd9d90aa7d6": "Nenhum servidor MCP encontrado.",
+  "69ab3b218fef6a5f": "Conexões com servidores MCP",
+  "69167bab39c399c3": "Última verificação: {status}"
 }
