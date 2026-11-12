@@ -14,7 +14,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { compactBeforeSendTokens } from "./contextWindow.ts";
+import { compactBeforeSendTokens, deriveLatestContextWindowSnapshot } from "./contextWindow.ts";
 import type { ThreadStructure } from "./models.ts";
 import { v2Projection } from "./orchestrationV2TestFixtures.ts";
 
@@ -260,5 +260,22 @@ describe("compactBeforeSendTokens", () => {
     expect(compactBeforeSendTokens(sendInput(overrides as Parameters<typeof sendInput>[0]))).toBe(
       expected ? 293_611 : null,
     );
+  });
+});
+
+describe("deriveLatestContextWindowSnapshot", () => {
+  it("shows a native percentage without inventing token counts", () => {
+    const snapshot = deriveLatestContextWindowSnapshot([], undefined, {
+      id: ProviderThreadId.make("kiro-thread"),
+      contextUsage: null,
+      nativeMetadata: { contextUsagePercentage: 0.9 },
+      updatedAt: DateTime.makeUnsafe("2026-10-15T00:00:00Z"),
+    });
+    expect(snapshot).toMatchObject({
+      usedTokens: null,
+      maxTokens: null,
+      usedPercentage: 0.9,
+      remainingPercentage: 99.1,
+    });
   });
 });

@@ -377,6 +377,9 @@ export interface AcpAdapterV2Flavor {
   readonly clientCapabilitiesMeta?: NonNullable<
     EffectAcpSchema.InitializeRequest["clientCapabilities"]
   >["_meta"];
+  readonly sessionMetadata?: (
+    notification: EffectAcpSchema.SessionNotification,
+  ) => OrchestrationV2ProviderThreadNativeMetadata | undefined;
   readonly mcpOverHttp?: boolean;
   /** The agent has no tool search of its own, so T3 lists optional tools on demand. */
   readonly deferMcpTools?: boolean;
@@ -5341,6 +5344,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 const merged = {
                   ...current.get(notification.sessionId),
                   ...stateEvent.metadata,
+                  ...flavor.sessionMetadata?.(notification),
                 };
                 return [merged, new Map(current).set(notification.sessionId, merged)] as const;
               });

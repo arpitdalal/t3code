@@ -5,6 +5,7 @@ import * as RpcClientError from "effect/rpc/RpcClientError";
 
 import { callRpc } from "./_internal/shared.ts";
 import * as AcpError from "./errors.ts";
+import * as AcpSchema from "./schema.ts";
 
 const decodeNestedNumberPayload = Schema.decodeUnknownEffect(
   Schema.Struct({ profile: Schema.Struct({ token: Schema.Number }) }),
@@ -51,6 +52,45 @@ describe("effect-acp errors", () => {
       const error = yield* callRpc("initialize", Effect.fail(failure)).pipe(Effect.flip);
       expect(error).toBe(original);
     });
+  });
+
+  it.effect("preserves protocol request errors as request errors", () => {
+    const failure = AcpSchema.Error.make({
+      code: -32602,
+      message: "Invalid params",
+      data: { field: "sessionId" },
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* callRpc("session/load", Effect.fail(failure)).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "AcpRequestError",
+        code: -32602,
+        errorMessage: "Invalid params",
+        data: { field: "sessionId" },
+        method: "session/load",
+        operation: "receive-response",
+      });
+    });
+  });
+
+  it("prefers string protocol data over vague Internal error titles", () => {
+    const error = new AcpError.AcpRequestError({
+      code: -32603,
+      errorMessage: "Internal error",
+      data: "Encountered an error in the response stream: You have reached the limit for overages.",
+    });
+    expect(error.message).toBe(
+      "Encountered an error in the response stream: You have reached the limit for overages.",
+    );
+    expect(
+      new AcpError.AcpRequestError({
+        code: -32602,
+        errorMessage: "Invalid params",
+        data: "sessionId is required",
+      }).message,
+    ).toBe("Invalid params: sessionId is required");
   });
 
   it("includes the authored detail but not the cause in the transport message", () => {
